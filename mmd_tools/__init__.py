@@ -18,7 +18,6 @@ bl_info= {
     "tracker_url": "",
     "category": "Object"}
 
-
 # if "bpy" in locals():
 #     import imp
 #     if "import_pmx" in locals():
@@ -35,7 +34,6 @@ bl_info= {
 #         imp.reload(cycles_converter)
 #     if "auto_scene_setup" in locals():
 #         imp.reload(auto_scene_setup)
-
 
 def menu_func_import(self, context):
     self.layout.operator(operators.ImportPmx.bl_idname, text="MikuMikuDance Model (.pmd, .pmx)")
@@ -139,6 +137,7 @@ def unregister():
     del bpy.types.PoseBone.mmd_bone
     del bpy.types.Material.mmd_material
 
+    del bpy.types.PoseBone.is_mmd_tip_bone
     del bpy.types.PoseBone.is_mmd_shadow_bone
     del bpy.types.Object.is_mmd_glsl_light
 
