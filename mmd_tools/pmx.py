@@ -834,7 +834,7 @@ class Material:
         self.enabled_self_shadow = False
         self.enabled_toon_edge = False
 
-        self.edge_color = []
+        self.edge_color = [0, 0, 0, 0]
         self.edge_size = 1
 
         self.texture = -1

@@ -137,7 +137,6 @@ def unregister():
     del bpy.types.PoseBone.mmd_bone
     del bpy.types.Material.mmd_material
 
-    del bpy.types.PoseBone.is_mmd_tip_bone
     del bpy.types.PoseBone.is_mmd_shadow_bone
     del bpy.types.Object.is_mmd_glsl_light
 
