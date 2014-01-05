@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import struct
 import os
+import math
 import logging
 
 class InvalidFileError(Exception):
@@ -973,9 +974,9 @@ class Bone:
 
         # 以下IKボーンのみ有効な変数
         self.target = None
-        self.loopCount = 8
+        self.loopCount = 30
         # IKループ計三時の1回あたりの制限角度(ラジアン)
-        self.rotationConstraint = 0.03
+        self.rotationConstraint = 10*math.pi
 
         # IKLinkオブジェクトの配列
         self.ik_links = []
