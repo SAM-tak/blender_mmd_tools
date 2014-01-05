@@ -8,6 +8,7 @@ from . import import_pmx
 from . import import_pmd
 from . import export_pmx
 from . import import_vmd
+from . import export_vmd
 from . import bpyutils
 
 from . import mmd_camera
@@ -223,6 +224,49 @@ class ExportPmx(Operator, ImportHelper):
 
         return {'FINISHED'}
 
+    def invoke(self, context, event):
+        wm = context.window_manager
+        wm.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+
+class ExportVmd(Operator, ImportHelper):
+    bl_idname = 'mmd_tools.export_vmd'
+    bl_label = 'Export VMD file (.vmd)'
+    bl_description = 'Export a VMD file (.vmd)'
+    bl_options = {'PRESET'}
+    
+    filename_ext = '.vmd'
+    filter_glob = bpy.props.StringProperty(default='*.vmd', options={'HIDDEN'})
+    
+    log_level = bpy.props.EnumProperty(items=LOG_LEVEL_ITEMS, name='Log level', default='DEBUG')
+    save_log = bpy.props.BoolProperty(name='Create a log file', default=False)
+    
+    def execute(self, context):
+        logger = logging.getLogger()
+        logger.setLevel(self.log_level)
+        if self.save_log:
+            handler = log_handler(self.log_level, filepath=self.filepath + '.mmd_tools.export.log')
+        else:
+            handler = log_handler(self.log_level)
+        logger.addHandler(handler)
+        
+        root = rigging.Rig.findRoot(context.active_object)
+        rig = rigging.Rig(root)
+        rig.clean()
+        try:
+            export_vmd.export(
+                              filepath=self.filepath,
+                              scale=root.mmd_root.scale,
+                              root=rig.rootObject(),
+                              armature=rig.armature(),
+                              meshes=rig.meshes()
+                              )
+        finally:
+            logger.removeHandler(handler)
+        
+        return {'FINISHED'}
+    
     def invoke(self, context, event):
         wm = context.window_manager
         wm.fileselect_add(self)

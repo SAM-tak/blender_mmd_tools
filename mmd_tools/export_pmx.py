@@ -278,8 +278,9 @@ class __PmxExporter:
 
                 if i.additionalTransform is not None:
                     b, influ = i.additionalTransform
-                    i.additionalTransform = (r[b.name], influ)
-                    i.hasAdditionalRotate = True
+                    if b.name in r:
+                        i.additionalTransform = (r[b.name], influ)
+                        i.hasAdditionalRotate = True
 
             self.__model.bones = pmx_bones
         return r

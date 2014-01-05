@@ -27,9 +27,10 @@ class MMDToolsObjectPanel(Panel):
         r.operator('mmd_tools.import_vmd', text='Motion')
 
         col.label('Export:')
-        c = col.column()
+        c = col.column(align=True)
         r = c.row()
         r.operator('mmd_tools.export_pmx', text='Model')
+        r.operator('mmd_tools.export_vmd', text='Motion')
 
         if active_obj is not None and active_obj.type == 'MESH':
             col = layout.column(align=True)
