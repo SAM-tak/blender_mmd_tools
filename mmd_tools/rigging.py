@@ -104,7 +104,7 @@ class InvalidRigidSettingException(ValueError):
 
 class Rig:
     def __init__(self, root_obj):
-        if root_obj.mmd_type != 'ROOT':
+        if root_obj is None or not root_obj.is_property_set("mmd_type") or root_obj.mmd_type != 'ROOT':
             raise ValueError('must be MMD ROOT type object')
         self.__root = root_obj
         self.__arm = None
@@ -136,7 +136,9 @@ class Rig:
 
     @staticmethod
     def findRoot(obj):
-        if obj.mmd_type == 'ROOT':
+        if obj is None:
+            return None
+        if obj.is_property_set("mmd_type") and obj.mmd_type == 'ROOT':
             return obj
         elif obj.parent is not None:
             return Rig.findRoot(obj.parent)

@@ -58,72 +58,68 @@ class __PmxExporter:
         return [u, 1.0-v]
 
     def __exportMeshes(self, meshes, bone_map):
-        mat_map = {}
+        face_list = []
         for mesh in meshes:
-            for index, mat_faces in mesh.material_faces.items():
-                name = mesh.materials[index].name
-                if name not in mat_map:
-                    mat_map[name] = []
-                mat_map[name].append((mat_faces, mesh.vertex_group_names))
+            for index, mat_faces in sorted(mesh.material_faces.items()):
+                face_list.append((mesh.materials[index], mat_faces, mesh.vertex_group_names))
 
-        # export vertices
+        # export vertices order by materials
         texture_list = []
         vert_count = 0
-        for mat_name, mat_meshes in mat_map.items():
+        for mat, mat_faces, vertex_group_names in face_list:
             face_count = 0
-            for mat_faces, vertex_group_names in mat_meshes:
-                mesh_vertices = []
-                for face in mat_faces:
-                    mesh_vertices.extend(face.vertices)
+            mesh_vertices = []
+            for face in mat_faces:
+                mesh_vertices.extend(face.vertices)
 
-                for v in mesh_vertices:
-                    vert_count += 1
-                    if v.index is not None:
-                        continue
+            for v in mesh_vertices:
+                vert_count += 1
+                if v.index is not None:
+                    continue
 
-                    v.index = len(self.__model.vertices)
-                    pv = pmx.Vertex()
-                    pv.co = list(v.co)
-                    pv.normal = v.normal * -1
-                    pv.uv = self.flipUV_V(v.uv)
+                v.index = len(self.__model.vertices)
+                pv = pmx.Vertex()
+                pv.co = list(v.co)
+                pv.normal = v.normal * -1
+                pv.uv = self.flipUV_V(v.uv)
 
-                    t = len(v.groups)
-                    if t == 0:
-                        weight = pmx.BoneWeight()
-                        weight.type = pmx.BoneWeight.BDEF1
-                        weight.bones = [-1]
-                        pv.weight = weight
-                    elif t == 1:
-                        weight = pmx.BoneWeight()
-                        weight.type = pmx.BoneWeight.BDEF1
-                        weight.bones = [bone_map[vertex_group_names[v.groups[0][0]]]]
-                        pv.weight = weight
-                    elif t == 2:
-                        vg1, vg2 = v.groups
-                        weight = pmx.BoneWeight()
-                        weight.type = pmx.BoneWeight.BDEF2
-                        weight.bones = [
-                            bone_map[vertex_group_names[vg1[0]]],
-                            bone_map[vertex_group_names[vg2[0]]]
-                            ]
-                        weight.weights = [vg1[1]]
-                        pv.weight = weight
-                    else:
-                        weight = pmx.BoneWeight()
-                        weight.type = pmx.BoneWeight.BDEF4
-                        weight.bones = [-1, -1, -1, -1]
-                        weight.weights = [0.0, 0.0, 0.0, 0.0]
-                        for i in range(min(len(v.groups), 4)):
-                            gn, w = v.groups[i]
-                            weight.bones[i] = bone_map[vertex_group_names[gn]]
-                            weight.weights[i] = w
-                        pv.weight = weight
-                    self.__model.vertices.append(pv)
+                t = len(v.groups)
+                if t == 0:
+                    weight = pmx.BoneWeight()
+                    weight.type = pmx.BoneWeight.BDEF1
+                    weight.bones = [-1]
+                    pv.weight = weight
+                elif t == 1:
+                    weight = pmx.BoneWeight()
+                    weight.type = pmx.BoneWeight.BDEF1
+                    weight.bones = [bone_map[vertex_group_names[v.groups[0][0]]]]
+                    pv.weight = weight
+                elif t == 2:
+                    vg1, vg2 = v.groups
+                    weight = pmx.BoneWeight()
+                    weight.type = pmx.BoneWeight.BDEF2
+                    weight.bones = [
+                        bone_map[vertex_group_names[vg1[0]]],
+                        bone_map[vertex_group_names[vg2[0]]]
+                        ]
+                    weight.weights = [vg1[1]]
+                    pv.weight = weight
+                else:
+                    weight = pmx.BoneWeight()
+                    weight.type = pmx.BoneWeight.BDEF4
+                    weight.bones = [-1, -1, -1, -1]
+                    weight.weights = [0.0, 0.0, 0.0, 0.0]
+                    for i in range(min(len(v.groups), 4)):
+                        gn, w = v.groups[i]
+                        weight.bones[i] = bone_map[vertex_group_names[gn]]
+                        weight.weights[i] = w
+                    pv.weight = weight
+                self.__model.vertices.append(pv)
 
-                for face in mat_faces:
-                    self.__model.faces.append([x.index for x in face.vertices])
-                face_count += len(mat_faces)
-            self.__exportMaterial(bpy.data.materials[mat_name], face_count, texture_list)
+            for face in mat_faces:
+                self.__model.faces.append([x.index for x in face.vertices])
+            face_count += len(mat_faces)
+            self.__exportMaterial(mat, face_count, texture_list)
 
 
     def __exportTexture(self, texture):
@@ -183,7 +179,6 @@ class __PmxExporter:
                 else:
                     index = textureList.index(tex)
                 p_mat.texture = index
-                p_mat.diffuse[3] = 1.0 # Set the alpha value to 1.0 if the material has textures.
             if not mmd_mat.is_shared_toon_texture and material.texture_slots[1] is not None:
                 tex = material.texture_slots[1].texture
                 index = -1
@@ -193,6 +188,8 @@ class __PmxExporter:
                 else:
                     index = textureList.index(tex)
                 p_mat.toon_texture = index
+            else:
+                p_mat.toon_texture = -1
             if material.texture_slots[2] is not None:
                 tex = material.texture_slots[2].texture
                 index = -1
@@ -202,6 +199,8 @@ class __PmxExporter:
                 else:
                     index = textureList.index(tex)
                 p_mat.sphere_texture = index
+            else:
+                p_mat.sphere_texture = -1
         self.__model.materials.append(p_mat)
 
     @classmethod
@@ -550,7 +549,7 @@ class __PmxExporter:
 
         # load face data
         materials = {}
-        for face, uv in zip(base_mesh.tessfaces, base_mesh.tessface_uv_textures.active.data):
+        for face, uv in zip(base_mesh.tessfaces, base_mesh.tessface_uv_textures[0].data):
             if len(face.vertices) != 3:
                 raise Exception
             v1 = self.__convertFaceUVToVertexUV(face.vertices[0], uv.uv1, base_vertices)
