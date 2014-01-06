@@ -16,12 +16,26 @@ import bmesh
 class __VmdExporter:
 
     def __init__(self):
-        self.__motion = None
+        self.__vmdFile = vmd.File()
+    
+    
+    def __exportArmatureTracksRecursive(self, bonename):
+        pass
+    
+    
+    def __exportArmatureTracks(self):
+        """ Export bone animation.
+        @return the dictionary to map Blender bone names to bone indices of the pmx.model instance.
+        """
+        
+        for bone in self.__armature.bones:
+            self.__exportArmatureTracksRecursive(bone.name)
 
     def execute(self, filepath, **args):
-        self.__motion = vmd.File()
-
-        vmd.save(filepath, self.__motion)
+        
+        self.__armature = args.get('armature', None)
+        
+        vmd.save(filepath, self.__vmdFile)
 
 def export(filepath, **kwargs):
     exporter = __VmdExporter()
