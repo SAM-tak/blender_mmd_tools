@@ -4,13 +4,20 @@ import collections
 
 
 ## vmd仕様の文字列をstringに変換
-def _toShiftJisString(byteString):
+def _fromShiftJisString(byteString):
     byteString = byteString.split(b"\x00")[0]
     try:
         return byteString.decode("shift_jis")
     except UnicodeDecodeError:
         # discard truncated sjis char
         return byteString[:-1].decode("shift_jis")
+
+
+def _toShiftJisString(src, buflen):
+    ret = bytearray(src, "shift_jis")
+    if len(ret) < buflen:
+        ret[len(ret):buflen] = b'\x00'
+    return ret
 
 
 class Header:
@@ -20,11 +27,12 @@ class Header:
 
     def load(self, fin):
         self.signature, = struct.unpack('<30s', fin.read(30))
-        self.model_name = _toShiftJisString(struct.unpack('<20s', fin.read(20))[0])
+        self.model_name = _fromShiftJisString(struct.unpack('<20s', fin.read(20))[0])
     
     def save(self, fout):
+        self.signature = _toShiftJisString("Vocaloid Motion Data 0002\0", 30)
         fout.write(struct.pack('<30s', self.signature))
-        fout.write(struct.pack('<20s', self.model_name.encode("shift_jis")))
+        fout.write(struct.pack('<20s', _toShiftJisString(self.model_name, 20)))
 
     def __repr__(self):
         return '<Header model_name %s>'%(self.model_name)
@@ -45,9 +53,9 @@ class BoneFrameKey:
 
     def save(self, fout):
         fout.write(struct.pack('<L', self.frame_number))
-        fout.write(struct.pack('<fff', self.location))
-        fout.write(struct.pack('<ffff', self.rotation))
-        fout.write(struct.pack('<64b', self.interp))
+        fout.write(struct.pack('<fff', *self.location))
+        fout.write(struct.pack('<ffff', *self.rotation))
+        fout.write(struct.pack('<64b', *self.interp))
 
     def __repr__(self):
         return '<BoneFrameKey frame %s, loa %s, rot %s>'%(
@@ -100,9 +108,9 @@ class CameraKeyFrameKey:
     def save(self, fout):
         fout.write(struct.pack('<L', self.frame_number))
         fout.write(struct.pack('<f', self.distance))
-        fout.write(struct.pack('<fff', self.location))
-        fout.write(struct.pack('<fff', self.rotation))
-        fout.write(struct.pack('<24b', self.interp))
+        fout.write(struct.pack('<fff', *self.location))
+        fout.write(struct.pack('<fff', *self.rotation))
+        fout.write(struct.pack('<24b', *self.interp))
         fout.write(struct.pack('<L', self.angle))
         fout.write(struct.pack('<b', self.persp))
 
@@ -130,8 +138,8 @@ class LampKeyFrameKey:
     
     def save(self, fout):
         fout.write(struct.pack('<L', self.frame_number))
-        fout.write(struct.pack('<fff', self.color))
-        fout.write(struct.pack('<fff', self.direction))
+        fout.write(struct.pack('<fff', *self.color))
+        fout.write(struct.pack('<fff', *self.direction))
 
     def __repr__(self):
         return '<LampKeyFrameKey frame %s, color %s, direction %s>'%(
@@ -148,7 +156,7 @@ class _AnimationBase(collections.defaultdict):
     def load(self, fin):
         count, = struct.unpack('<L', fin.read(4))
         for i in range(count):
-            name = _toShiftJisString(struct.unpack('<15s', fin.read(15))[0])
+            name = _fromShiftJisString(struct.unpack('<15s', fin.read(15))[0])
             cls = self.frameClass()
             frameKey = cls()
             frameKey.load(fin)
@@ -156,9 +164,11 @@ class _AnimationBase(collections.defaultdict):
 
     def save(self, fout):
         fout.write(struct.pack('<L', self.count))
-        for k, v in self:
-            fout.write(struct.pack('<15s', k.encode("shift_jis")))
-            v.save(fout)
+        for k, v in self.items():
+            for i in v:
+                fout.write(struct.pack('<15s', _toShiftJisString(k, 15)))
+                i.save(fout)
+
 
 class BoneAnimation(_AnimationBase):
     def __init__(self):
@@ -225,22 +235,21 @@ class LampAnimation(list):
 class File:
     def __init__(self):
         self.filepath = None
-        self.header = None
-        self.boneAnimation = None
-        self.shapeKeyAnimation = None
-        self.cameraAnimation = None
-        self.lampAnimation = None
+        self.header = Header()
+        self.boneAnimation = BoneAnimation()
+        self.boneAnimation.count = 0
+        self.shapeKeyAnimation = ShapeKeyAnimation()
+        self.shapeKeyAnimation.count = 0
+        self.cameraAnimation = CameraAnimation()
+        self.cameraAnimation.count = 0
+        self.lampAnimation = LampAnimation()
+        self.lampAnimation.count = 0
 
     def load(self, **args):
         path = args['filepath']
 
         with open(path, 'rb') as fin:
             self.filepath = path
-            self.header = Header()
-            self.boneAnimation = BoneAnimation()
-            self.shapeKeyAnimation = ShapeKeyAnimation()
-            self.cameraAnimation = CameraAnimation()
-            self.lampAnimation = LampAnimation()
 
             self.header.load(fin)
             self.boneAnimation.load(fin)
@@ -252,14 +261,13 @@ class File:
                 pass # no valid camera/lamp data
 
     def save(self, **args):
-        path = args['filepath']
+        path =  args.get('filepath', None)
         
         with open(path, 'wb') as fout:
+            self.filepath = path
+            
             self.header.save(fout)
-            try:
-                self.boneAnimation.save(fout)
-                self.shapeKeyAnimation.save(fout)
-                self.cameraAnimation.save(fout)
-                self.lampAnimation.save(fout)
-            except struct.error:
-                pass # no valid camera/lamp data
+            self.boneAnimation.save(fout)
+            self.shapeKeyAnimation.save(fout)
+            self.cameraAnimation.save(fout)
+            self.lampAnimation.save(fout)

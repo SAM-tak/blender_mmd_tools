@@ -46,6 +46,8 @@ def menu_func_armature(self, context):
     self.layout.operator(operators.CreateMMDModelRoot.bl_idname, text='Create MMD Model')
 
 def register():
+    bpy.utils.register_class(properties.MMDDisplayItem)
+    bpy.utils.register_class(properties.MMDDisplayItemFrame)
     bpy.utils.register_class(properties.MMDRoot)
     bpy.utils.register_class(properties.MMDMaterial)
     bpy.utils.register_class(properties.MMDCamera)
@@ -115,30 +117,41 @@ def register():
     bpy.utils.register_module(__name__)
 
 def unregister():
-    bpy.types.INFO_MT_file_import.remove(menu_func_import)
-    bpy.types.INFO_MT_file_export.remove(menu_func_export)
-
-    del bpy.types.Object.is_mmd_camera
+    #del bpy.types.Object.is_mmd_camera
     del bpy.types.Object.mmd_camera
 
     del bpy.types.Object.is_mmd_lamp
 
-    del bpy.types.Object.is_mmd_rigid
+    #del bpy.types.Object.is_mmd_rigid
     del bpy.types.Object.mmd_rigid
 
-    del bpy.types.Object.is_mmd_joint
+    #del bpy.types.Object.is_mmd_joint
     del bpy.types.Object.mmd_joint
 
     del bpy.types.Object.is_mmd_rigid_track_target
-    del bpy.types.Object.is_mmd_non_collision_constraint
-    del bpy.types.Object.is_mmd_spring_joint
-    del bpy.types.Object.is_mmd_spring_goal
+    #del bpy.types.Object.is_mmd_non_collision_constraint
+    #del bpy.types.Object.is_mmd_spring_joint
+    #del bpy.types.Object.is_mmd_spring_goal
 
     del bpy.types.PoseBone.mmd_bone
     del bpy.types.Material.mmd_material
 
     del bpy.types.PoseBone.is_mmd_shadow_bone
     del bpy.types.Object.is_mmd_glsl_light
+
+    bpy.utils.unregister_class(properties.MMDRoot)
+    bpy.utils.unregister_class(properties.MMDDisplayItem)
+    bpy.utils.unregister_class(properties.MMDDisplayItemFrame)
+    bpy.utils.unregister_class(properties.MMDMaterial)
+    bpy.utils.unregister_class(properties.MMDCamera)
+    bpy.utils.unregister_class(properties.MMDBone)
+    bpy.utils.unregister_class(properties.MMDRigid)
+    bpy.utils.unregister_class(properties.MMDJoint)
+    bpy.utils.unregister_class(panels.MMD_ROOT_UL_display_item_frames)
+    bpy.utils.unregister_class(panels.MMD_ROOT_UL_display_items)
+    bpy.types.INFO_MT_file_import.remove(menu_func_import)
+    bpy.types.INFO_MT_file_export.remove(menu_func_export)
+    bpy.types.INFO_MT_armature_add.remove(menu_func_armature)
 
     bpy.utils.unregister_module(__name__)
 

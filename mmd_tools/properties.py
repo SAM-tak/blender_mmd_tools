@@ -20,8 +20,6 @@ class MMDDisplayItem(PropertyGroup):
             ],
         )
 
-bpy.utils.register_class(MMDDisplayItem)
-
 class MMDDisplayItemFrame(PropertyGroup):
     name_e = StringProperty(
         name='Name(Eng)',
@@ -43,8 +41,6 @@ class MMDDisplayItemFrame(PropertyGroup):
         name='Active Display Item',
         default=0,
         )
-
-bpy.utils.register_class(MMDDisplayItemFrame)
 
 ############################################
 # Functions for MMD Root update callbacks. #
