@@ -142,6 +142,7 @@ class ImportVmd(Operator, ImportHelper):
         wm.fileselect_add(self)
         return {'RUNNING_MODAL'}
 
+
 class ImportVmdToMMDModel(Operator, ImportHelper):
     bl_idname = 'mmd_tools.import_vmd_to_mmd_model'
     bl_label = 'Import VMD file To MMD Model'
@@ -331,7 +332,11 @@ class SetShadelessGLSLShading(Operator):
         for i in filter(lambda x: x.is_mmd_glsl_light, context.scene.objects):
             context.scene.objects.unlink(i)
 
-        bpy.context.scene.display_settings.display_device = 'None'
+        try:
+            bpy.context.scene.display_settings.display_device = 'None'
+        except TypeError:
+            pass # Blender was built without OpenColorIO:
+
         context.area.spaces[0].viewport_shade='TEXTURED'
         bpy.context.scene.game_settings.material_mode = 'GLSL'
         return {'FINISHED'}
@@ -370,23 +375,6 @@ class ResetShading(Operator):
         context.area.spaces[0].viewport_shade='SOLID'
         bpy.context.scene.game_settings.material_mode = 'MULTITEXTURE'
         return {'FINISHED'}
-
-
-######################
-# Material Operators #
-######################
-class SetShadelessMaterials(Operator):
-    bl_idname = 'mmd_tools.set_shadeless_materials'
-    bl_label = 'GLSL View'
-    bl_description = 'Set the materials of selected objects to shadeless.'
-    bl_options = {'PRESET'}
-
-    def execute(self, context):
-        for i in context.selected_objects:
-            for s in i.material_slots:
-                s.material.use_shadeless = True
-        return {'FINISHED'}
-
 
 ########################
 # MMD Camera Oparators #
@@ -597,6 +585,13 @@ class CreateMMDModelRoot(Operator):
             bone = data.edit_bones.new(name=u'全ての親')
             bone.head = [0.0, 0.0, 0.0]
             bone.tail = [0.0, 0.0, 1.0*self.scale]
+        mmd_root = rig.rootObject().mmd_root
+        frame_root = mmd_root.display_item_frames.add()
+        frame_root.name = 'Root'
+        frame_root.is_special = True
+        frame_facial = mmd_root.display_item_frames.add()
+        frame_facial.name = u'表情'
+        frame_facial.is_special = True
 
         return {'FINISHED'}
 
