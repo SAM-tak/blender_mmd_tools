@@ -1,11 +1,5 @@
 # -*- coding: utf-8 -*-
 
-import bpy
-
-from . import properties
-from . import operators
-from . import panels
-
 bl_info= {
     "name": "mmd_tools",
     "author": "sugiany",
@@ -18,22 +12,19 @@ bl_info= {
     "tracker_url": "",
     "category": "Object"}
 
-# if "bpy" in locals():
-#     import imp
-#     if "import_pmx" in locals():
-#         imp.reload(import_pmx)
-#     if "export_pmx" in locals():
-#         imp.reload(export_pmx)
-#     if "import_vmd" in locals():
-#         imp.reload(import_vmd)
-#     if "mmd_camera" in locals():
-#         imp.reload(mmd_camera)
-#     if "utils" in locals():
-#         imp.reload(utils)
-#     if "cycles_converter" in locals():
-#         imp.reload(cycles_converter)
-#     if "auto_scene_setup" in locals():
-#         imp.reload(auto_scene_setup)
+
+if "bpy" in locals():
+    import importlib
+    importlib.reload(properties)
+    importlib.reload(operators)
+    importlib.reload(panels)
+else:
+    from . import properties
+    from . import operators
+    from . import panels
+
+import bpy
+
 
 def menu_func_import(self, context):
     self.layout.operator(operators.fileio.ImportPmx.bl_idname, text="MikuMikuDance Model (.pmd, .pmx)")
