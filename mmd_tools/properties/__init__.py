@@ -1,8 +1,16 @@
 # -*- coding: utf-8 -*-
 
-import bpy
+if "bpy" in locals():
+    import importlib
+    importlib.reload(root)
+    importlib.reload(camera)
+    importlib.reload(material)
+    importlib.reload(bone)
+    importlib.reload(rigid_body)
+else:
+    from . import root, camera, material, bone, rigid_body
 
-from . import root, camera, material, bone, rigid_body
+import bpy
 
 __properties = {
     bpy.types.Object: {
