@@ -11,6 +11,7 @@ if "bpy" in locals():
     importlib.reload(util_tools)
     importlib.reload(view_prop)
 else:
+    import bpy
     from . import (
         prop_bone,
         prop_camera,
@@ -22,4 +23,3 @@ else:
         view_prop,
         )
 
-import bpy

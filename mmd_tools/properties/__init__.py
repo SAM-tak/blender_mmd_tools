@@ -2,15 +2,21 @@
 
 if "bpy" in locals():
     import importlib
+    importlib.reload(morph)
     importlib.reload(root)
     importlib.reload(camera)
     importlib.reload(material)
     importlib.reload(bone)
     importlib.reload(rigid_body)
-    importlib.reload(morph)
 else:
     import bpy
-    from . import root, camera, material, bone, rigid_body, morph
+    from . import (
+        root,
+        camera,
+        material,
+        bone,
+        rigid_body,
+        )
 
 __properties = {
     bpy.types.Object: {
