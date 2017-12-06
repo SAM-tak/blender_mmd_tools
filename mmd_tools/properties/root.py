@@ -1,21 +1,18 @@
 # -*- coding: utf-8 -*-
 """ MMDモデルパラメータ用Prop
 """
-if "bpy" in locals():
-    import importlib
-    importlib.reload(mmd_model)
-    importlib.reload(material)
-    importlib.reload(morph)
-    importlib.reload(utils)
-else:
-    import bpy
-    from bpy.types import PropertyGroup
-    from bpy.props import BoolProperty, CollectionProperty, FloatProperty, IntProperty, StringProperty, EnumProperty
+import bpy
+from bpy.types import PropertyGroup
+from bpy.props import BoolProperty, CollectionProperty, FloatProperty, IntProperty, StringProperty, EnumProperty
 
-    import mmd_tools.core.model as mmd_model
-    from mmd_tools.core import material
-    from mmd_tools.properties import morph
-    from mmd_tools import utils
+import mmd_tools.core.model as mmd_model
+from mmd_tools.core.material import FnMaterial
+from mmd_tools.properties.morph import BoneMorph
+from mmd_tools.properties.morph import MaterialMorph
+from mmd_tools.properties.morph import VertexMorph
+from mmd_tools.properties.morph import UVMorph
+from mmd_tools.properties.morph import GroupMorph
+from mmd_tools import utils
 
 #===========================================
 # Callback functions
@@ -28,7 +25,7 @@ def _toggleUseToonTexture(self, context):
         for m in i.data.materials:
             if m is None:
                 continue
-            material.FnMaterial(m).use_toon_texture(use_toon)
+            FnMaterial(m).use_toon_texture(use_toon)
 
 def _toggleUseSphereTexture(self, context):
     root = self.id_data
@@ -38,7 +35,7 @@ def _toggleUseSphereTexture(self, context):
         for m in i.data.materials:
             if m is None:
                 continue
-            material.FnMaterial(m).use_sphere_texture(use_sphere)
+            FnMaterial(m).use_sphere_texture(use_sphere)
 
 def _toggleVisibilityOfMeshes(self, context):
     root = self.id_data
@@ -217,6 +214,7 @@ class MMDDisplayItemFrame(PropertyGroup):
         default=0,
         )
 
+
 class MMDRoot(PropertyGroup):
     """ MMDモデルデータ
 
@@ -340,23 +338,23 @@ class MMDRoot(PropertyGroup):
     #*************************
     material_morphs = CollectionProperty(
         name='Material Morphs',
-        type=morph.MaterialMorph,
+        type=MaterialMorph,
         )
     uv_morphs = CollectionProperty(
         name='UV Morphs',
-        type=morph.UVMorph,
+        type=UVMorph,
         )
     bone_morphs = CollectionProperty(
         name='Bone Morphs',
-        type=morph.BoneMorph,
+        type=BoneMorph,
         )
     vertex_morphs = CollectionProperty(
         name='Vertex Morphs',
-        type=morph.VertexMorph
+        type=VertexMorph
         )
     group_morphs = CollectionProperty(
         name='Group Morphs',
-        type=morph.GroupMorph,
+        type=GroupMorph,
         )
     active_morph_type = EnumProperty(
         name='Active Morph Type',
