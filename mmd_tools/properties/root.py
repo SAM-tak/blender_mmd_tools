@@ -5,14 +5,17 @@ import bpy
 from bpy.types import PropertyGroup
 from bpy.props import BoolProperty, CollectionProperty, FloatProperty, IntProperty, StringProperty, EnumProperty
 
-import mmd_tools.core.model as mmd_model
+from mmd_tools import register_wrap
+from mmd_tools import utils
+from mmd_tools.bpyutils import SceneOp
 from mmd_tools.core.material import FnMaterial
+from mmd_tools.core.sdef import FnSDEF
 from mmd_tools.properties.morph import BoneMorph
 from mmd_tools.properties.morph import MaterialMorph
 from mmd_tools.properties.morph import VertexMorph
 from mmd_tools.properties.morph import UVMorph
 from mmd_tools.properties.morph import GroupMorph
-from mmd_tools import utils
+import mmd_tools.core.model as mmd_model
 
 #===========================================
 # Callback functions
@@ -35,7 +38,15 @@ def _toggleUseSphereTexture(self, context):
         for m in i.data.materials:
             if m is None:
                 continue
-            FnMaterial(m).use_sphere_texture(use_sphere)
+            FnMaterial(m).use_sphere_texture(use_sphere, i)
+
+def _toggleUseSDEF(self, context):
+    root = self.id_data
+    rig = mmd_model.Model(root)
+    mute_sdef = not self.use_sdef
+    for i in rig.meshes():
+        if FnSDEF.SHAPEKEY_NAME in getattr(i.data.shape_keys, 'key_blocks', ()):
+            i.data.shape_keys.key_blocks[FnSDEF.SHAPEKEY_NAME].mute = mute_sdef
 
 def _toggleVisibilityOfMeshes(self, context):
     root = self.id_data
@@ -44,7 +55,7 @@ def _toggleVisibilityOfMeshes(self, context):
     for i in rig.meshes():
         i.hide = hide
     if hide and context.active_object is None:
-        context.scene.objects.active = root
+        SceneOp(context).active_object = root
 
 def _toggleVisibilityOfRigidBodies(self, context):
     root = self.id_data
@@ -53,7 +64,7 @@ def _toggleVisibilityOfRigidBodies(self, context):
     for i in rig.rigidBodies():
         i.hide = hide
     if hide and context.active_object is None:
-        context.scene.objects.active = root
+        SceneOp(context).active_object = root
 
 def _toggleVisibilityOfJoints(self, context):
     root = self.id_data
@@ -62,7 +73,7 @@ def _toggleVisibilityOfJoints(self, context):
     for i in rig.joints():
         i.hide = hide
     if hide and context.active_object is None:
-        context.scene.objects.active = root
+        SceneOp(context).active_object = root
 
 def _toggleVisibilityOfTemporaryObjects(self, context):
     root = self.id_data
@@ -71,7 +82,7 @@ def _toggleVisibilityOfTemporaryObjects(self, context):
     for i in rig.temporaryObjects(rigid_track_only=True):
         i.hide = hide
     if hide and context.active_object is None:
-        context.scene.objects.active = root
+        SceneOp(context).active_object = root
 
 def _toggleShowNamesOfRigidBodies(self, context):
     root = self.id_data
@@ -92,7 +103,7 @@ def _setVisibilityOfMMDRigArmature(prop, v):
     if arm is None:
         return
     if bpy.context.active_object == arm:
-        bpy.context.scene.objects.active = obj
+        SceneOp(bpy.context).active_object = obj
     arm.hide = not v
 
 def _getVisibilityOfMMDRigArmature(prop):
@@ -101,30 +112,30 @@ def _getVisibilityOfMMDRigArmature(prop):
     return not (arm is None or arm.hide)
 
 def _setActiveRigidbodyObject(prop, v):
-    obj = bpy.context.scene.objects[v]
+    obj = SceneOp(bpy.context).id_objects[v]
     if mmd_model.isRigidBodyObject(obj):
         obj.hide = False
         utils.selectAObject(obj)
     prop['active_rigidbody_object_index'] = v
 
 def _getActiveRigidbodyObject(prop):
-    objects = bpy.context.scene.objects
+    objects = SceneOp(bpy.context).id_objects
     active_obj = objects.active
-    if active_obj and mmd_model.isRigidBodyObject(active_obj):
+    if mmd_model.isRigidBodyObject(active_obj):
         prop['active_rigidbody_object_index'] = objects.find(active_obj.name)
     return prop.get('active_rigidbody_object_index', 0)
 
 def _setActiveJointObject(prop, v):
-    obj = bpy.context.scene.objects[v]
+    obj = SceneOp(bpy.context).id_objects[v]
     if mmd_model.isJointObject(obj):
         obj.hide = False
         utils.selectAObject(obj)
     prop['active_joint_object_index'] = v
 
 def _getActiveJointObject(prop):
-    objects = bpy.context.scene.objects
+    objects = SceneOp(bpy.context).id_objects
     active_obj = objects.active
-    if active_obj and mmd_model.isJointObject(active_obj):
+    if mmd_model.isJointObject(active_obj):
         prop['active_joint_object_index'] = objects.find(active_obj.name)
     return prop.get('active_joint_object_index', 0)
 
@@ -139,14 +150,14 @@ def _getActiveMorph(prop):
     return 0
 
 def _setActiveMeshObject(prop, v):
-    obj = bpy.context.scene.objects[v]
+    obj = SceneOp(bpy.context).id_objects[v]
     if obj.type == 'MESH' and obj.mmd_type == 'NONE':
         obj.hide = False
         utils.selectAObject(obj)
     prop['active_mesh_index'] = v
 
 def _getActiveMeshObject(prop):
-    objects = bpy.context.scene.objects
+    objects = SceneOp(bpy.context).id_objects
     active_obj = objects.active
     if (active_obj and active_obj.type == 'MESH'
             and active_obj.mmd_type == 'NONE'):
@@ -157,6 +168,7 @@ def _getActiveMeshObject(prop):
 # Property classes
 #===========================================
 
+@register_wrap
 class MMDDisplayItem(PropertyGroup):
     """ PMX 表示項目(表示枠内の1項目)
     """
@@ -182,6 +194,7 @@ class MMDDisplayItem(PropertyGroup):
         default='vertex_morphs',
         )
 
+@register_wrap
 class MMDDisplayItemFrame(PropertyGroup):
     """ PMX 表示枠
 
@@ -202,7 +215,7 @@ class MMDDisplayItemFrame(PropertyGroup):
         )
 
     ## 表示項目のリスト
-    items = CollectionProperty(
+    data = CollectionProperty(
         name='Display Items',
         type=MMDDisplayItem,
         )
@@ -215,6 +228,7 @@ class MMDDisplayItemFrame(PropertyGroup):
         )
 
 
+@register_wrap
 class MMDRoot(PropertyGroup):
     """ MMDモデルデータ
 
@@ -298,6 +312,13 @@ class MMDRoot(PropertyGroup):
         name='Use Sphere Texture',
         description='Use sphere texture',
         update=_toggleUseSphereTexture,
+        default=True,
+        )
+
+    use_sdef = BoolProperty(
+        name='Use SDEF',
+        description='Use SDEF',
+        update=_toggleUseSDEF,
         default=True,
         )
 

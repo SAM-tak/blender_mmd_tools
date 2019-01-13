@@ -65,18 +65,9 @@ class  FileReadStream(FileStream):
 
     def readStr(self, size):
         buf = self.__fin.read(size)
-        try:
-            index = buf.index(b'\x00')
-            t = buf[:index]
-            return t.decode('shift-jis')
-        except ValueError:
-            if buf[0] == b'\xfd':
-                return ''
-            try:
-                return buf.decode('shift-jis')
-            except UnicodeDecodeError:
-                logging.warning('found a invalid shift-jis string.')
-                return ''
+        if buf[0] == b'\xfd':
+            return ''
+        return buf.split(b'\x00')[0].decode('shift_jis', errors='replace')
 
     def readFloat(self):
         v, = struct.unpack('<f', self.__fin.read(4))
@@ -579,8 +570,8 @@ class Model:
             joint.load(fs)
             self.joints.append(joint)
             logging.info('Joint %d: %s', i, joint.name)
-            logging.debug('  Rigid A: %s (index: %d)', self.rigid_bodies[joint.src_rigid].name, joint.src_rigid)
-            logging.debug('  Rigid B: %s (index: %d)', self.rigid_bodies[joint.dest_rigid].name, joint.dest_rigid)
+            logging.debug('  Rigid A: %s', joint.src_rigid)
+            logging.debug('  Rigid B: %s', joint.dest_rigid)
             logging.debug('  Location: (%f, %f, %f)', *joint.location)
             logging.debug('  Rotation: (%f, %f, %f)', *joint.rotation)
             logging.debug('  Location Limit: (%f, %f, %f) - (%f, %f, %f)', *(joint.minimum_location + joint.maximum_location))
@@ -602,7 +593,11 @@ def load(path):
         logging.info('')
 
         model = Model()
-        model.load(fs)
+        try:
+            model.load(fs)
+        except struct.error as e:
+            logging.error(' * Corrupted file: %s', e)
+            #raise
 
         logging.info(' Finish loading.')
         logging.info('----------------------------------------')

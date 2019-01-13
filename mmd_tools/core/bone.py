@@ -3,8 +3,11 @@
 import bpy
 from bpy.types import PoseBone
 
-from mathutils import Vector
+from math import pi
+import math
+from mathutils import Vector, Quaternion, Matrix
 from mmd_tools import bpyutils
+from mmd_tools.bpyutils import TransformConstraintOp
 
 
 def remove_constraint(constraints, name):
@@ -22,6 +25,9 @@ def remove_edit_bones(edit_bones, bone_names):
 
 
 class FnBone(object):
+    AUTO_LOCAL_AXIS_ARMS = ('左肩', '左腕', '左ひじ', '左手首', '右腕', '右肩', '右ひじ', '右手首')
+    AUTO_LOCAL_AXIS_FINGERS = ('親指','人指', '中指', '薬指','小指')
+    AUTO_LOCAL_AXIS_SEMI_STANDARD_ARMS = ('左腕捩', '左手捩', '左肩P', '左ダミー', '右腕捩', '右手捩', '右肩P', '右ダミー')
 
     def __init__(self, pose_bone=None):
         if pose_bone is not None and not isinstance(pose_bone, PoseBone):
@@ -56,20 +62,88 @@ class FnBone(object):
     pose_bone = property(__get_pose_bone, __set_pose_bone)
 
 
-    @classmethod
-    def load_bone_local_axes(cls, armature, enable=True):
+    @staticmethod
+    def get_selected_pose_bones(armature):
         if armature.mode == 'EDIT':
             with bpyutils.select_object(armature): # update selected bones
                 bpy.ops.object.mode_set(mode='EDIT') # back to edit mode
+        context_selected_bones = bpy.context.selected_pose_bones or bpy.context.selected_bones or []
+        bones = armature.pose.bones
+        return (bones[b.name] for b in context_selected_bones if not bones[b.name].is_mmd_shadow_bone)
 
+    @classmethod
+    def load_bone_fixed_axis(cls, armature, enable=True):
+        for b in cls.get_selected_pose_bones(armature):
+            mmd_bone = b.mmd_bone
+            mmd_bone.enabled_fixed_axis = enable
+            lock_rotation = b.lock_rotation[:]
+            if enable:
+                axes = b.bone.matrix_local.to_3x3().transposed()
+                if lock_rotation.count(False) == 1:
+                    mmd_bone.fixed_axis = axes[lock_rotation.index(False)].xzy
+                else:
+                    mmd_bone.fixed_axis = axes[1].xzy # Y-axis
+            elif all(b.lock_location) and lock_rotation.count(True) > 1 and \
+                    lock_rotation == (b.lock_ik_x, b.lock_ik_y, b.lock_ik_z):
+                # unlock transform locks if fixed axis was applied
+                b.lock_ik_x, b.lock_ik_y, b.lock_ik_z = b.lock_rotation = (False, False, False)
+                b.lock_location = b.lock_scale = (False, False, False)
+
+    @classmethod
+    def apply_bone_fixed_axis(cls, armature):
+        bone_map = {}
         for b in armature.pose.bones:
-            bone = b.bone
-            if b.is_mmd_shadow_bone or not bone.select:
+            if b.is_mmd_shadow_bone or not b.mmd_bone.enabled_fixed_axis:
                 continue
+            mmd_bone = b.mmd_bone
+            parent_tip = b.parent and not b.parent.is_mmd_shadow_bone and b.parent.mmd_bone.is_tip
+            bone_map[b.name] = (mmd_bone.fixed_axis.normalized(), mmd_bone.is_tip, parent_tip)
+
+        force_align = True
+        with bpyutils.edit_object(armature) as data:
+            for bone in data.edit_bones:
+                if bone.name not in bone_map:
+                    bone.select = False
+                    continue
+                fixed_axis, is_tip, parent_tip = bone_map[bone.name]
+                if fixed_axis.length:
+                    axes = [bone.x_axis, bone.y_axis, bone.z_axis]
+                    direction = fixed_axis.normalized().xzy
+                    idx, val = max([(i, direction.dot(v)) for i, v in enumerate(axes)], key=lambda x: abs(x[1]))
+                    idx_1, idx_2 = (idx+1)%3, (idx+2)%3
+                    axes[idx] = -direction if val < 0 else direction
+                    axes[idx_2] = axes[idx].cross(axes[idx_1])
+                    axes[idx_1] = axes[idx_2].cross(axes[idx])
+                    if parent_tip and bone.use_connect:
+                        bone.use_connect = False
+                        bone.head = bone.parent.head
+                    if force_align:
+                        tail = bone.head + axes[1].normalized()*bone.length
+                        if is_tip or (tail - bone.tail).length > 1e-4:
+                            for c in bone.children:
+                                if c.use_connect:
+                                    c.use_connect = False
+                                    if is_tip:
+                                        c.head = bone.head
+                        bone.tail = tail
+                    bone.align_roll(axes[2])
+                    bone_map[bone.name] = tuple(i!=idx for i in range(3))
+                else:
+                    bone_map[bone.name] = (True, True, True)
+                bone.select = True
+
+        for bone_name, locks in bone_map.items():
+            b = armature.pose.bones[bone_name]
+            b.lock_location = (True, True, True)
+            b.lock_ik_x, b.lock_ik_y, b.lock_ik_z = b.lock_rotation = locks
+
+    @classmethod
+    def load_bone_local_axes(cls, armature, enable=True):
+        for b in cls.get_selected_pose_bones(armature):
             mmd_bone = b.mmd_bone
             mmd_bone.enabled_local_axes = enable
             if enable:
-                axes = bone.matrix_local.to_3x3().transposed()
+                axes = b.bone.matrix_local.to_3x3().transposed()
                 mmd_bone.local_axis_x = axes[0].xzy
                 mmd_bone.local_axis_z = axes[2].xzy
 
@@ -80,8 +154,6 @@ class FnBone(object):
             if b.is_mmd_shadow_bone or not b.mmd_bone.enabled_local_axes:
                 continue
             mmd_bone = b.mmd_bone
-            if mmd_bone.has_additional_rotation or mmd_bone.has_additional_location:
-                mmd_bone.is_additional_transform_dirty = True
             bone_map[b.name] = (mmd_bone.local_axis_x, mmd_bone.local_axis_z)
 
         with bpyutils.edit_object(armature) as data:
@@ -103,10 +175,63 @@ class FnBone(object):
     def get_axes(mmd_local_axis_x, mmd_local_axis_z):
         x_axis = Vector(mmd_local_axis_x).normalized().xzy
         z_axis = Vector(mmd_local_axis_z).normalized().xzy
-        y_axis = z_axis.cross(x_axis)
-        z_axis = x_axis.cross(y_axis) # correction
+        y_axis = z_axis.cross(x_axis).normalized()
+        z_axis = x_axis.cross(y_axis).normalized() # correction
         return (x_axis, y_axis, z_axis)
 
+    @classmethod
+    def apply_auto_bone_roll(cls, armature):
+        bone_names = []
+        for b in armature.pose.bones:
+            if (not b.is_mmd_shadow_bone and
+                    not b.mmd_bone.enabled_local_axes and
+                    cls.has_auto_local_axis(b.mmd_bone.name_j)):
+                bone_names.append(b.name)
+        with bpyutils.edit_object(armature) as data:
+            for bone in data.edit_bones:
+                if bone.name not in bone_names:
+                    select = False
+                    continue
+                cls.update_auto_bone_roll(bone)
+                bone.select = True
+
+    @classmethod
+    def update_auto_bone_roll(cls, edit_bone):
+        # make a triangle face (p1,p2,p3)
+        p1 = edit_bone.head.copy()
+        p2 = edit_bone.tail.copy()
+        p3 = p2.copy()
+        # translate p3 in xz plane
+        # the normal vector of the face tracks -Y direction
+        xz = Vector((p2.x - p1.x, p2.z - p1.z))
+        xz.normalize()
+        theta = math.atan2(xz.y, xz.x)
+        norm = edit_bone.vector.length
+        p3.z += norm * math.cos(theta)
+        p3.x -= norm * math.sin(theta)
+        # calculate the normal vector of the face
+        y = (p2 - p1).normalized()
+        z_tmp = (p3 - p1).normalized()
+        x = y.cross(z_tmp) # normal vector
+        # z = x.cross(y)
+        cls.update_bone_roll(edit_bone, y.xzy, x.xzy)
+
+    @classmethod
+    def has_auto_local_axis(cls, name_j):
+        if name_j:
+            if (name_j in cls.AUTO_LOCAL_AXIS_ARMS or
+                    name_j in cls.AUTO_LOCAL_AXIS_SEMI_STANDARD_ARMS):
+                return True
+            for finger_name in cls.AUTO_LOCAL_AXIS_FINGERS:
+                if finger_name in name_j:
+                    return True
+        return False
+
+    @staticmethod
+    def patch_rna_idprop(pose_bones): # workaround for Rigify conflicts
+        from rna_prop_ui import rna_idprop_ui_get
+        for b in pose_bones:
+            rna_idprop_ui_get(b, create=True)
 
     @classmethod
     def clean_additional_transformation(cls, armature):
@@ -133,12 +258,18 @@ class FnBone(object):
             remove_constraint(constraints, 'mmd_additional_location')
             if remove_constraint(constraints, 'mmd_additional_parent'):
                 p_bone.bone.use_inherit_rotation = True
+        cls.patch_rna_idprop(armature.pose.bones)
 
     @classmethod
     def apply_additional_transformation(cls, armature):
 
         def __is_dirty_bone(b):
-            return not b.is_mmd_shadow_bone and b.mmd_bone.is_additional_transform_dirty
+            if b.is_mmd_shadow_bone:
+                return False
+            mmd_bone = b.mmd_bone
+            if mmd_bone.has_additional_rotation or mmd_bone.has_additional_location:
+                return True
+            return mmd_bone.is_additional_transform_dirty
         dirty_bones = [b for b in armature.pose.bones if __is_dirty_bone(b)]
 
         # setup constraints
@@ -161,6 +292,7 @@ class FnBone(object):
         # finish
         for p_bone in dirty_bones:
             p_bone.mmd_bone.is_additional_transform_dirty = False
+        cls.patch_rna_idprop(armature.pose.bones)
 
     @classmethod
     def __setup_constraints(cls, p_bone):
@@ -168,7 +300,7 @@ class FnBone(object):
         mmd_bone = p_bone.mmd_bone
         influence = mmd_bone.additional_transform_influence
         target_bone = mmd_bone.additional_transform_bone
-        mute_rotation = not mmd_bone.has_additional_rotation or p_bone.is_in_ik_chain
+        mute_rotation = not mmd_bone.has_additional_rotation #or p_bone.is_in_ik_chain
         mute_location = not mmd_bone.has_additional_location
 
         constraints = p_bone.constraints
@@ -181,43 +313,17 @@ class FnBone(object):
 
         shadow_bone = _AT_ShadowBoneCreate(bone_name, target_bone)
 
-        def __config(name, mute, map_type):
-            from math import pi
-            c = constraints.get(name, None)
+        def __config(name, mute, map_type, value):
             if mute:
-                if c:
-                    constraints.remove(c)
-            else:
-                if c and c.type != 'TRANSFORM':
-                    constraints.remove(c)
-                    c = None
-                if c is None:
-                    c = constraints.new('TRANSFORM')
-                    c.name = name
-                c.influence = 1
-                c.target = p_bone.id_data
-                c.target_space = 'LOCAL'
-                c.owner_space = 'LOCAL'
-                c.use_motion_extrapolate = True
-                c.map_to_x_from = 'X'
-                c.map_to_y_from = 'Y'
-                c.map_to_z_from = 'Z'
-                c.map_from = map_type
-                c.map_to = map_type
-                if map_type == 'ROTATION':
-                    c.from_min_x_rot = c.from_min_y_rot = c.from_min_z_rot = -pi
-                    c.from_max_x_rot = c.from_max_y_rot = c.from_max_z_rot = pi
-                    c.to_min_x_rot = c.to_min_y_rot = c.to_min_z_rot = c.from_min_x_rot * influence
-                    c.to_max_x_rot = c.to_max_y_rot = c.to_max_z_rot = c.from_max_x_rot * influence
-                elif map_type == 'LOCATION':
-                    c.from_min_x = c.from_min_y = c.from_min_z = -100
-                    c.from_max_x = c.from_max_y = c.from_max_z = 100
-                    c.to_min_x = c.to_min_y = c.to_min_z = c.from_min_x * influence
-                    c.to_max_x = c.to_max_y = c.to_max_z = c.from_max_x * influence
-                shadow_bone.add_constraint(c)
+                remove_constraint(constraints, name)
+                return
+            c = TransformConstraintOp.create(constraints, name, map_type)
+            c.target = p_bone.id_data
+            shadow_bone.add_constraint(c)
+            TransformConstraintOp.update_min_max(c, value, influence)
 
-        __config('mmd_additional_rotation', mute_rotation, 'ROTATION')
-        __config('mmd_additional_location', mute_location, 'LOCATION')
+        __config('mmd_additional_rotation', mute_rotation, 'ROTATION', pi)
+        __config('mmd_additional_location', mute_location, 'LOCATION', 100)
 
         return shadow_bone
 
@@ -226,13 +332,9 @@ class FnBone(object):
         influence = p_bone.mmd_bone.additional_transform_influence
         constraints = p_bone.constraints
         c = constraints.get('mmd_additional_rotation', None)
-        if c:
-            c.to_min_x_rot = c.to_min_y_rot = c.to_min_z_rot = c.from_min_x_rot * influence
-            c.to_max_x_rot = c.to_max_y_rot = c.to_max_z_rot = c.from_max_x_rot * influence
+        TransformConstraintOp.update_min_max(c, pi, influence)
         c = constraints.get('mmd_additional_location', None)
-        if c:
-            c.to_min_x = c.to_min_y = c.to_min_z = c.from_min_x * influence
-            c.to_max_x = c.to_max_y = c.to_max_z = c.from_max_x * influence
+        TransformConstraintOp.update_min_max(c, 100, influence)
 
 
 class _AT_ShadowBoneRemove:

@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 
 if "bpy" in locals():
-    import importlib
+    if bpy.app.version < (2, 71, 0):
+        import imp as importlib
+    else:
+        import importlib
     importlib.reload(animation)
     importlib.reload(camera)
     importlib.reload(display_item)
@@ -13,6 +16,7 @@ if "bpy" in locals():
     importlib.reload(morph)
     importlib.reload(rigid_body)
     importlib.reload(view)
+    importlib.reload(sdef)
 else:
     import bpy
     from . import (
@@ -27,4 +31,5 @@ else:
         morph,
         rigid_body,
         view,
+        sdef
         )

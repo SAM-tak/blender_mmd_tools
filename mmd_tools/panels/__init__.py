@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 
 if "bpy" in locals():
-    import importlib
+    if bpy.app.version < (2, 71, 0):
+        import imp as importlib
+    else:
+        import importlib
     importlib.reload(prop_bone)
     importlib.reload(prop_camera)
     importlib.reload(prop_lamp)
@@ -10,6 +13,7 @@ if "bpy" in locals():
     importlib.reload(tool)
     importlib.reload(util_tools)
     importlib.reload(view_prop)
+    importlib.reload(view_header)
 else:
     import bpy
     from . import (
@@ -21,5 +25,6 @@ else:
         tool,
         util_tools,
         view_prop,
+        view_header
         )
 

@@ -6,19 +6,22 @@ import mathutils
 from mmd_tools import bpyutils
 from mmd_tools.core import rigid_body
 from mmd_tools.core.bone import FnBone
+from mmd_tools.core.morph import FnMorph
+from mmd_tools.bpyutils import matmul
+from mmd_tools.bpyutils import SceneOp
 
 import logging
 import time
 
 
 def isRigidBodyObject(obj):
-    return obj.mmd_type == 'RIGID_BODY'
+    return obj and obj.mmd_type == 'RIGID_BODY'
 
 def isJointObject(obj):
-    return obj.mmd_type == 'JOINT'
+    return obj and obj.mmd_type == 'JOINT'
 
 def isTemporaryObject(obj):
-    return obj.mmd_type in ['TRACK_TARGET', 'NON_COLLISION_CONSTRAINT', 'SPRING_CONSTRAINT', 'SPRING_GOAL']
+    return obj and obj.mmd_type in {'TRACK_TARGET', 'NON_COLLISION_CONSTRAINT', 'SPRING_CONSTRAINT', 'SPRING_GOAL'}
 
 
 def getRigidBodySize(obj):
@@ -57,8 +60,8 @@ class Model:
         self.__temporary_grp = None
 
     @staticmethod
-    def create(name, name_e='', scale=1, obj_name=None):
-        scene = bpy.context.scene
+    def create(name, name_e='', scale=1, obj_name=None, armature=None, add_root_bone=False):
+        scene = SceneOp(bpy.context)
         if obj_name is None:
             obj_name = name
 
@@ -67,21 +70,36 @@ class Model:
         root.mmd_root.name = name
         root.mmd_root.name_e = name_e
         root.empty_draw_size = scale / 0.2
-        #root.lock_location = [True, True, True]
-        #root.lock_rotation = [True, True, True]
-        root.lock_scale = [True, True, True]
+        scene.link_object(root)
 
-        arm = bpy.data.armatures.new(name=obj_name)
-        #arm.draw_type = 'STICK'
-        armObj = bpy.data.objects.new(name=obj_name+'_arm', object_data=arm)
+        armObj = armature
+        if armObj:
+            m = armObj.matrix_world
+            armObj.parent_type = 'OBJECT'
+            armObj.parent = root
+            #armObj.matrix_world = m
+            root.matrix_world = m
+            armObj.matrix_local.identity()
+        else:
+            arm = bpy.data.armatures.new(name=obj_name)
+            #arm.draw_type = 'STICK'
+            armObj = bpy.data.objects.new(name=obj_name+'_arm', object_data=arm)
+            armObj.parent = root
+            scene.link_object(armObj)
         armObj.lock_rotation = armObj.lock_location = armObj.lock_scale = [True, True, True]
         armObj.show_x_ray = True
         armObj.draw_type = 'WIRE'
-        armObj.parent = root
 
-        scene.objects.link(root)
-        scene.objects.link(armObj)
+        if add_root_bone:
+            bone_name = u'全ての親'
+            with bpyutils.edit_object(armObj) as data:
+                bone = data.edit_bones.new(name=bone_name)
+                bone.head = [0.0, 0.0, 0.0]
+                bone.tail = [0.0, 0.0, root.empty_draw_size]
+            armObj.pose.bones[bone_name].mmd_bone.name_j = bone_name
+            armObj.pose.bones[bone_name].mmd_bone.name_e = 'Root'
 
+        bpyutils.select_object(root)
         return Model(root)
 
     @classmethod
@@ -92,23 +110,38 @@ class Model:
             return cls.findRoot(obj.parent)
         return None
 
-    def initialDisplayFrames(self, root_bone_name=None):
+    def initialDisplayFrames(self, reset=True):
         frames = self.__root.mmd_root.display_item_frames
-        if len(frames) > 0:
+        if reset and len(frames):
             self.__root.mmd_root.active_display_item_frame = 0
             frames.clear()
-        frame_root = frames.add()
+
+        frame_root = frames.get('Root', None) or frames.add()
         frame_root.name = 'Root'
         frame_root.name_e = 'Root'
         frame_root.is_special = True
-        if root_bone_name:
-            item = frame_root.items.add()
-            item.type = 'BONE'
-            item.name = root_bone_name
-        frame_facial = frames.add()
+
+        frame_facial = frames.get(u'表情', None) or frames.add()
         frame_facial.name = u'表情'
         frame_facial.name_e = 'Facial'
         frame_facial.is_special = True
+
+        arm = self.armature()
+        if arm and len(arm.data.bones) and len(frame_root.data) < 1:
+            item = frame_root.data.add()
+            item.type = 'BONE'
+            item.name = arm.data.bones[0].name
+
+        if not reset:
+            frames.move(frames.find('Root'), 0)
+            frames.move(frames.find(u'表情'), 1)
+
+    @property
+    def morph_slider(self):
+        return FnMorph.get_morph_slider(self)
+
+    def loadMorphs(self):
+        FnMorph.load_morphs(self)
 
     def createRigidBodyPool(self, counts):
         if counts < 1:
@@ -121,9 +154,10 @@ class Model:
         obj.show_wire = True
         obj.show_transparent = True
         obj.hide_render = True
-        for attr_name in ('camera', 'diffuse', 'glossy', 'scatter', 'shadow', 'transmission'):
-            if hasattr(obj.cycles_visibility, attr_name):
-                setattr(obj.cycles_visibility, attr_name, False)
+        if hasattr(obj, 'cycles_visibility'):
+            for attr_name in ('camera', 'diffuse', 'glossy', 'scatter', 'shadow', 'transmission'):
+                if hasattr(obj.cycles_visibility, attr_name):
+                    setattr(obj.cycles_visibility, attr_name, False)
 
         if bpy.app.version < (2, 71, 0):
             obj.mmd_rigid.shape = 'BOX'
@@ -174,7 +208,7 @@ class Model:
 
         obj.mmd_rigid.shape = rigid_body.collisionShape(shape_type)
         obj.mmd_rigid.size = size
-        obj.mmd_rigid.type = str(dynamics_type)
+        obj.mmd_rigid.type = str(dynamics_type) if dynamics_type in range(3) else '1'
 
         if collision_group_number is not None:
             obj.mmd_rigid.collision_group_number = collision_group_number
@@ -214,6 +248,8 @@ class Model:
         obj.empty_draw_size = 0.1 * self.__root.empty_draw_size
         obj.hide_render = True
 
+        if bpy.ops.rigidbody.world_add.poll():
+            bpy.ops.rigidbody.world_add()
         bpy.ops.rigidbody.constraint_add(type='GENERIC_SPRING')
         rbc = obj.rigid_body_constraint
         rbc.disable_collisions = False
@@ -377,7 +413,7 @@ class Model:
                 rigids.parent = self.__root
                 rigids.hide = rigids.hide_select = True
                 rigids.lock_rotation = rigids.lock_location = rigids.lock_scale = [True, True, True]
-                bpy.context.scene.objects.link(rigids)
+                SceneOp(bpy.context).link_object(rigids)
                 self.__rigid_grp = rigids
         return self.__rigid_grp
 
@@ -392,7 +428,7 @@ class Model:
                 joints.parent = self.__root
                 joints.hide = joints.hide_select = True
                 joints.lock_rotation = joints.lock_location = joints.lock_scale = [True, True, True]
-                bpy.context.scene.objects.link(joints)
+                SceneOp(bpy.context).link_object(joints)
                 self.__joint_grp = joints
         return self.__joint_grp
 
@@ -407,7 +443,7 @@ class Model:
                 temporarys.parent = self.__root
                 temporarys.hide = temporarys.hide_select = True
                 temporarys.lock_rotation = temporarys.lock_location = temporarys.lock_scale = [True, True, True]
-                bpy.context.scene.objects.link(temporarys)
+                SceneOp(bpy.context).link_object(temporarys)
                 self.__temporary_grp = temporarys
         return self.__temporary_grp
 
@@ -490,7 +526,7 @@ class Model:
 
         mmd_root = self.rootObject().mmd_root
         for frame in mmd_root.display_item_frames:
-            for item in frame.items:
+            for item in frame.data:
                 if item.type == 'BONE' and item.name == old_bone_name:
                     item.name = new_bone_name
         for mesh in self.meshes():
@@ -529,15 +565,21 @@ class Model:
                 const = i.constraints['mmd_tools_rigid_track']
                 i.constraints.remove(const)
 
-        self.__removeChildrenOfTemporaryGroupObject() # for speeding up only
-
-        for i in self.temporaryObjects():
-            if i.mmd_type in ['NON_COLLISION_CONSTRAINT', 'SPRING_GOAL', 'SPRING_CONSTRAINT']:
-                bpy.context.scene.objects.unlink(i)
-                bpy.data.objects.remove(i)
-            elif i.mmd_type == 'TRACK_TARGET':
-                bpy.context.scene.objects.unlink(i)
-                bpy.data.objects.remove(i)
+        if bpy.app.version < (2, 78, 0):
+            self.__removeChildrenOfTemporaryGroupObject() # for speeding up only
+            for i in self.temporaryObjects():
+                if i.mmd_type in ['NON_COLLISION_CONSTRAINT', 'SPRING_GOAL', 'SPRING_CONSTRAINT']:
+                    bpy.context.scene.objects.unlink(i)
+                    bpy.data.objects.remove(i)
+                elif i.mmd_type == 'TRACK_TARGET':
+                    bpy.context.scene.objects.unlink(i)
+                    bpy.data.objects.remove(i)
+        else:
+            for i in self.temporaryObjects():
+                if i.mmd_type in ['NON_COLLISION_CONSTRAINT', 'SPRING_GOAL', 'SPRING_CONSTRAINT']:
+                    bpy.data.objects.remove(i, do_unlink=True)
+                elif i.mmd_type == 'TRACK_TARGET':
+                    bpy.data.objects.remove(i, do_unlink=True)
 
         rigid_track_counts = 0
         for i in self.rigidBodies():
@@ -698,37 +740,37 @@ class Model:
             target_bone = arm.pose.bones[bone_name]
 
             if rigid_type == rigid_body.MODE_STATIC:
-                m = target_bone.matrix * target_bone.bone.matrix_local.inverted()
+                m = matmul(target_bone.matrix, target_bone.bone.matrix_local.inverted())
                 self.__rigid_body_matrix_map[rigid_obj] = m
                 orig_scale = rigid_obj.scale.copy()
-                to_matrix_world = rigid_obj.matrix_world * rigid_obj.matrix_local.inverted()
-                matrix_world = to_matrix_world * (m * rigid_obj.matrix_local)
+                to_matrix_world = matmul(rigid_obj.matrix_world, rigid_obj.matrix_local.inverted())
+                matrix_world = matmul(to_matrix_world, matmul(m, rigid_obj.matrix_local))
                 rigid_obj.parent = arm
                 rigid_obj.parent_type = 'BONE'
                 rigid_obj.parent_bone = bone_name
                 rigid_obj.matrix_world = matrix_world
                 rigid_obj.scale = orig_scale
                 #relation.mute = False
-                #relation.inverse_matrix = (arm.matrix_world * target_bone.bone.matrix_local).inverted()
+                #relation.inverse_matrix = matmul(arm.matrix_world, target_bone.bone.matrix_local).inverted()
                 fake_children = self.__fake_parent_map.get(rigid_obj, None)
                 if fake_children:
                     for fake_child in fake_children:
                         logging.debug('          - fake_child: %s', fake_child.name)
-                        t, r, s = (m * fake_child.matrix_local).decompose()
+                        t, r, s = matmul(m, fake_child.matrix_local).decompose()
                         fake_child.location = t
                         fake_child.rotation_euler = r.to_euler(fake_child.rotation_mode)
 
             elif rigid_type in [rigid_body.MODE_DYNAMIC, rigid_body.MODE_DYNAMIC_BONE]:
-                m = target_bone.matrix * target_bone.bone.matrix_local.inverted()
+                m = matmul(target_bone.matrix, target_bone.bone.matrix_local.inverted())
                 self.__rigid_body_matrix_map[rigid_obj] = m
-                t, r, s = (m * rigid_obj.matrix_local).decompose()
+                t, r, s = matmul(m, rigid_obj.matrix_local).decompose()
                 rigid_obj.location = t
                 rigid_obj.rotation_euler = r.to_euler(rigid_obj.rotation_mode)
                 fake_children = self.__fake_parent_map.get(rigid_obj, None)
                 if fake_children:
                     for fake_child in fake_children:
                         logging.debug('          - fake_child: %s', fake_child.name)
-                        t, r, s = (m * fake_child.matrix_local).decompose()
+                        t, r, s = matmul(m, fake_child.matrix_local).decompose()
                         fake_child.location = t
                         fake_child.rotation_euler = r.to_euler(fake_child.rotation_mode)
 
@@ -736,7 +778,7 @@ class Model:
                     empty = bpy.data.objects.new(
                         'mmd_bonetrack',
                         None)
-                    bpy.context.scene.objects.link(empty)
+                    SceneOp(bpy.context).link_object(empty)
                     empty.matrix_world = target_bone.matrix
                     empty.empty_draw_size = 0.1 * self.__root.empty_draw_size
                     empty.empty_draw_type = 'ARROWS'
@@ -856,7 +898,7 @@ class Model:
     def __makeSpring(self, target, base_obj, spring_stiffness):
         with bpyutils.select_object(target):
             bpy.ops.object.duplicate()
-            spring_target = bpy.context.scene.objects.active
+            spring_target = SceneOp(bpy.context).active_object
         t = spring_target.constraints.get('mmd_tools_rigid_parent')
         if t is not None:
             spring_target.constraints.remove(t)
@@ -870,7 +912,7 @@ class Model:
         obj = bpy.data.objects.new(
             'S.'+target.name,
             None)
-        bpy.context.scene.objects.link(obj)
+        SceneOp(bpy.context).link_object(obj)
         obj.location = target.location
         obj.empty_draw_size = 0.1
         obj.empty_draw_type = 'ARROWS'
@@ -912,7 +954,7 @@ class Model:
                 m = self.__rigid_body_matrix_map.get(rbc.object2, None)
                 if m is None:
                     continue
-            t, r, s = (m * i.matrix_local).decompose()
+            t, r, s = matmul(m, i.matrix_local).decompose()
             i.location = t
             i.rotation_euler = r.to_euler(i.rotation_mode)
 

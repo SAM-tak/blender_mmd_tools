@@ -2,6 +2,9 @@
 import re
 import os
 
+from mmd_tools import register_wrap
+from mmd_tools.bpyutils import SceneOp
+
 ## 指定したオブジェクトのみを選択状態かつアクティブにする
 def selectAObject(obj):
     import bpy
@@ -10,7 +13,7 @@ def selectAObject(obj):
     except Exception:
         pass
     bpy.ops.object.select_all(action='DESELECT')
-    bpy.context.scene.objects.active = obj
+    SceneOp(bpy.context).active_object = obj
     obj.select=True
 
 ## 現在のモードを指定したオブジェクトのEdit Modeに変更する
@@ -25,7 +28,7 @@ def setParentToBone(obj, parent, bone_name):
     selectAObject(parent)
     bpy.ops.object.mode_set(mode='POSE')
     selectAObject(obj)
-    bpy.context.scene.objects.active = parent
+    SceneOp(bpy.context).active_object = parent
     parent.select = True
     bpy.ops.object.mode_set(mode='POSE')
     parent.data.bones.active = parent.data.bones[bone_name]
@@ -34,21 +37,18 @@ def setParentToBone(obj, parent, bone_name):
 
 def selectSingleBone(context, armature, bone_name, reset_pose=False):
     import bpy
-    from mathutils import Vector, Quaternion
     try:
         bpy.ops.object.mode_set(mode='OBJECT')
     except:
         pass
-    for i in context.scene.objects:
+    for i in context.selected_objects:
         i.select = False
-    armature.hide = False
-    armature.select = True
-    armature.layers[context.scene.active_layer] = True
-    context.scene.objects.active = armature
+    SceneOp(context).select_object(armature)
+    SceneOp(context).active_object = armature
+    bpy.ops.object.mode_set(mode='POSE')
     if reset_pose:
         for p_bone in armature.pose.bones:
             p_bone.matrix_basis.identity()
-    bpy.ops.object.mode_set(mode='POSE')
     armature_bones = armature.data.bones
     for i in armature_bones:
         i.select = (i.name == bone_name)
@@ -88,6 +88,7 @@ def mergeVertexGroup(meshObj, src_vertex_group_name, dest_vertex_group_name):
 
 def separateByMaterials(meshObj):
     import bpy
+    matrix_parent_inverse = meshObj.matrix_parent_inverse.copy()
     prev_parent = meshObj.parent
     dummy_parent = bpy.data.objects.new(name='tmp', object_data=None)
     meshObj.parent = dummy_parent
@@ -102,16 +103,17 @@ def separateByMaterials(meshObj):
 
     for i in dummy_parent.children:
         mesh = i.data
+        materials = mesh.materials
         if len(mesh.polygons) > 0:
-            mat_index = mesh.polygons[0].material_index
-            mat = mesh.materials[mat_index]
-            for k in mesh.materials:
-                mesh.materials.pop(index=0, update_data=True)
-            mesh.materials.append(mat)
-            for po in mesh.polygons:
-                po.material_index = 0
-            i.name = mat.name
-            i.parent = prev_parent
+            if len(materials) > 1:
+                mat_index = mesh.polygons[0].material_index
+                for x in reversed(range(len(materials))):
+                    if x != mat_index:
+                        materials.pop(index=x, update_data=True)
+        i.name = getattr(materials[0], 'name', 'None') if len(materials) else 'None'
+        i.parent = prev_parent
+        i.matrix_parent_inverse = matrix_parent_inverse
+    bpy.data.objects.remove(dummy_parent)
 
 def clearUnusedMeshes():
     import bpy
@@ -221,6 +223,7 @@ class ItemOp:
         items.move(index_end, index)
         return items[index], index
 
+@register_wrap
 class ItemMoveOp:
     import bpy
     type = bpy.props.EnumProperty(

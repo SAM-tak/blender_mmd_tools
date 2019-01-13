@@ -181,6 +181,7 @@ def import_pmd_to_pmx(filepath):
     logging.info('----- Converted %d bones', len(pmd_model.iks))
 
     texture_map = {}
+    toon_texture_map = {}
     logging.info('')
     logging.info('------------------------------')
     logging.info(' Convert Materials')
@@ -193,16 +194,17 @@ def import_pmd_to_pmx(filepath):
         pmx_mat.specular = mat.specular
         pmx_mat.shininess = mat.shininess
         pmx_mat.ambient = mat.ambient
-        pmx_mat.is_double_sided = False
-        pmx_mat.enabled_self_shadow = True # pmd doesn't support this
+        pmx_mat.is_double_sided = (mat.diffuse[3] < 1.0)
         pmx_mat.enabled_self_shadow_map = abs(mat.diffuse[3] - 0.98) > 1e-7 # consider precision error
         pmx_mat.enabled_toon_edge = (mat.edge_flag != 0)
+        pmx_mat.enabled_self_shadow = pmx_mat.enabled_self_shadow_map # True (in MMD)
+        pmx_mat.enabled_drop_shadow = pmx_mat.enabled_toon_edge # True (in MMD)
         pmx_mat.edge_color = [0, 0, 0, 1]
         pmx_mat.vertex_count = mat.vertex_count
         if len(mat.texture_path) > 0:
             tex_path = mat.texture_path
             if tex_path not in texture_map:
-                logging.info('  Create pmx.Texture %s', tex_path)
+                logging.info('  Create pmx.Texture -------- %s', tex_path)
                 tex = pmx.Texture()
                 tex.path = os.path.normpath(os.path.join(os.path.dirname(target_path), tex_path))
                 pmx_model.textures.append(tex)
@@ -211,7 +213,7 @@ def import_pmd_to_pmx(filepath):
         if len(mat.sphere_path) > 0:
             tex_path = mat.sphere_path
             if tex_path not in texture_map:
-                logging.info('  Create pmx.Texture %s', tex_path)
+                logging.info('  Create pmx.Texture -Sphere- %s', tex_path)
                 tex = pmx.Texture()
                 tex.path = os.path.normpath(os.path.join(os.path.dirname(target_path), tex_path))
                 pmx_model.textures.append(tex)
@@ -222,16 +224,19 @@ def import_pmd_to_pmx(filepath):
         pmx_mat.toon_texture = -1
         if mat.toon_index in range(len(pmd_model.toon_textures)):
             tex_path = pmd_model.toon_textures[mat.toon_index]
-            if tex_path not in texture_map:
-                logging.info('  Create pmx.Texture %s', tex_path)
+            if tex_path not in toon_texture_map:
+                logging.info('  Create pmx.Texture --Toon-- %s', tex_path)
                 if re.match(r'toon(0[1-9]|10)\.bmp$', tex_path):
-                    texture_map[tex_path] = (True, int(tex_path[-6:-4])-1)
+                    toon_texture_map[tex_path] = (True, int(tex_path[-6:-4])-1)
+                elif tex_path in texture_map:
+                    toon_texture_map[tex_path] = (False, texture_map[tex_path])
                 else:
                     tex = pmx.Texture()
                     tex.path = os.path.normpath(os.path.join(os.path.dirname(target_path), tex_path))
                     pmx_model.textures.append(tex)
-                    texture_map[tex_path] = (False, len(pmx_model.textures)-1)
-            pmx_mat.is_shared_toon_texture, pmx_mat.toon_texture = texture_map[tex_path]
+                    texture_map[tex_path] = len(pmx_model.textures) - 1
+                    toon_texture_map[tex_path] = (False, len(pmx_model.textures)-1)
+            pmx_mat.is_shared_toon_texture, pmx_mat.toon_texture = toon_texture_map[tex_path]
         pmx_model.materials.append(pmx_mat)
     logging.info('----- Converted %d materials', len(pmx_model.materials))
 

@@ -9,9 +9,11 @@ from bpy.props import FloatProperty
 from bpy.props import CollectionProperty
 from bpy.props import EnumProperty
 
+from mmd_tools import register_wrap
 from mmd_tools.core.model import Model as FnModel
 from mmd_tools.core.bone import FnBone
 from mmd_tools.core.material import FnMaterial
+from mmd_tools.core.morph import FnMorph
 from mmd_tools import utils
 
 
@@ -28,21 +30,30 @@ def _set_name(prop, value):
     if prop_name == value:
         return
 
-    used_names = set(x.name for x in getattr(mmd_root, morph_type))
+    used_names = {x.name for x in getattr(mmd_root, morph_type) if x != prop}
     value = utils.uniqueName(value, used_names)
     if prop_name is not None:
         if morph_type == 'vertex_morphs':
             kb_list = {}
             for mesh in FnModel(prop.id_data).meshes():
-                shape_keys = mesh.data.shape_keys
-                if shape_keys:
-                    for kb in shape_keys.key_blocks:
-                        kb_list.setdefault(kb.name, []).append(kb)
+                for kb in getattr(mesh.data.shape_keys, 'key_blocks', ()):
+                    kb_list.setdefault(kb.name, []).append(kb)
 
             if prop_name in kb_list:
                 value = utils.uniqueName(value, used_names|kb_list.keys())
                 for kb in kb_list[prop_name]:
                     kb.name = value
+
+        elif morph_type == 'uv_morphs':
+            vg_list = {}
+            for mesh in FnModel(prop.id_data).meshes():
+                for vg, n, x in FnMorph.get_uv_morph_vertex_groups(mesh):
+                    vg_list.setdefault(n, []).append(vg)
+
+            if prop_name in vg_list:
+                value = utils.uniqueName(value, used_names|vg_list.keys())
+                for vg in vg_list[prop_name]:
+                    vg.name = vg.name.replace(prop_name, value)
 
         if 1:#morph_type != 'group_morphs':
             for m in mmd_root.group_morphs:
@@ -50,13 +61,21 @@ def _set_name(prop, value):
                     if d.name == prop_name and d.morph_type == morph_type:
                         d.name = value
 
-        for item in mmd_root.display_item_frames[u'表情'].items:
+        frame_facial = mmd_root.display_item_frames.get(u'表情')
+        for item in getattr(frame_facial, 'data', []):
             if item.name == prop_name and item.morph_type == morph_type:
                 item.name = value
                 break
 
+        obj = FnModel(prop.id_data).morph_slider.placeholder()
+        if obj and value not in obj.data.shape_keys.key_blocks:
+            kb = obj.data.shape_keys.key_blocks.get(prop_name, None)
+            if kb:
+                kb.name = value
+
     prop['name'] = value
 
+@register_wrap
 class _MorphBase:
     name = StringProperty(
         name='Name',
@@ -106,6 +125,7 @@ def _set_bone(prop, value):
     fnBone = FnBone(pose_bone)
     prop['bone_id'] = fnBone.bone_id
 
+@register_wrap
 class BoneMorphData(PropertyGroup):
     """
     """
@@ -136,6 +156,7 @@ class BoneMorphData(PropertyGroup):
         default=[1, 0, 0, 0],
         )
 
+@register_wrap
 class BoneMorph(_MorphBase, PropertyGroup):
     """Bone Morph
     """
@@ -176,6 +197,7 @@ def _set_related_mesh(prop, value):
 def _get_related_mesh(prop):
     return prop.get('related_mesh', '')
 
+@register_wrap
 class MaterialMorphData(PropertyGroup):
     """
     """
@@ -308,6 +330,7 @@ class MaterialMorphData(PropertyGroup):
         default=[0, 0, 0, 1],
         )
 
+@register_wrap
 class MaterialMorph(_MorphBase, PropertyGroup):
     """ Material Morph
     """
@@ -321,6 +344,7 @@ class MaterialMorph(_MorphBase, PropertyGroup):
         default=0,
         )
 
+@register_wrap
 class UVMorphOffset(PropertyGroup):
     """UV Morph Offset
     """
@@ -341,6 +365,7 @@ class UVMorphOffset(PropertyGroup):
         default=[0, 0, 0, 0],
         )
 
+@register_wrap
 class UVMorph(_MorphBase, PropertyGroup):
     """UV Morph
     """
@@ -351,6 +376,15 @@ class UVMorph(_MorphBase, PropertyGroup):
         max=4,
         default=0,
         )
+    data_type = EnumProperty(
+        name='Data Type',
+        description='Select data type',
+        items = [
+            ('DATA', 'Data', 'Store offset data in root object (deprecated)', 0),
+            ('VERTEX_GROUP', 'Vertex Group', 'Store offset data in vertex groups', 1),
+            ],
+        default='DATA',
+        )
     data = CollectionProperty(
         name='Morph Data',
         type=UVMorphOffset,
@@ -360,7 +394,15 @@ class UVMorph(_MorphBase, PropertyGroup):
         min=0,
         default=0,
         )
+    vertex_group_scale = FloatProperty(
+        name='Vertex Group Scale',
+        description='The value scale of "Vertex Group" data type',
+        precision=3,
+        step=0.1,
+        default=1,
+        )
 
+@register_wrap
 class GroupMorphOffset(PropertyGroup):
     """Group Morph Offset
     """
@@ -386,6 +428,7 @@ class GroupMorphOffset(PropertyGroup):
         default=0
         )
 
+@register_wrap
 class GroupMorph(_MorphBase, PropertyGroup):
     """Group Morph
     """
@@ -399,6 +442,7 @@ class GroupMorph(_MorphBase, PropertyGroup):
         default=0,
         )
 
+@register_wrap
 class VertexMorph(_MorphBase, PropertyGroup):
     """Vertex Morph
     """

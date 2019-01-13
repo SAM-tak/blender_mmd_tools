@@ -501,7 +501,7 @@ class Model:
 
             logging.info('%s %d: %s', m.__class__.__name__, i, m.name)
             logging.debug('  Name(english): %s', m.name_e)
-            logging.debug('  Category: %s', display_categories[m.category])
+            logging.debug('  Category: %s (%d)', display_categories.get(m.category, '#Invalid'), m.category)
             logging.debug('')
         logging.info('----- Loaded %d morphs.', len(self.morphs))
 
@@ -536,9 +536,8 @@ class Model:
             logging.info('Rigid Body %d: %s', i, r.name)
             logging.debug('  Name(english): %s', r.name_e)
             logging.debug('  Type: %s', rigid_types[r.type])
-            logging.debug('  Mode: %s', rigid_modes[r.mode])
-            if r.bone is not None:
-                logging.debug('  Related bone: %s (index: %d)', self.bones[r.bone].name, r.bone)
+            logging.debug('  Mode: %s (%d)', rigid_modes.get(r.mode, '#Invalid'), r.mode)
+            logging.debug('  Related bone: %s', r.bone)
             logging.debug('  Collision group: %d', r.collision_group_number)
             logging.debug('  Collision group mask: 0x%x', r.collision_group_mask)
             logging.debug('  Size: (%f, %f, %f)', *r.size)
@@ -564,8 +563,8 @@ class Model:
 
             logging.info('Joint %d: %s', i, j.name)
             logging.debug('  Name(english): %s', j.name_e)
-            logging.debug('  Rigid A: %s (index: %d)', self.rigids[j.src_rigid].name, j.src_rigid)
-            logging.debug('  Rigid B: %s (index: %d)', self.rigids[j.dest_rigid].name, j.dest_rigid)
+            logging.debug('  Rigid A: %s', j.src_rigid)
+            logging.debug('  Rigid B: %s', j.dest_rigid)
             logging.debug('  Location: (%f, %f, %f)', *j.location)
             logging.debug('  Rotation: (%f, %f, %f)', *j.rotation)
             logging.debug('  Location Limit: (%f, %f, %f) - (%f, %f, %f)', *(j.minimum_location + j.maximum_location))
@@ -592,70 +591,60 @@ comment(english):
 %s
 ''', self.name, self.name_e, self.comment, self.comment_e)
 
-        logging.info('exporting vertices...')
+        logging.info('exporting vertices... %d', len(self.vertices))
         fs.writeInt(len(self.vertices))
         for i in self.vertices:
             i.save(fs)
-        logging.info('the number of vetices: %d', len(self.vertices))
         logging.info('finished exporting vertices.')
 
-        logging.info('exporting faces...')
+        logging.info('exporting faces... %d', len(self.faces))
         fs.writeInt(len(self.faces)*3)
         for f3, f2, f1 in self.faces:
             fs.writeVertexIndex(f1)
             fs.writeVertexIndex(f2)
             fs.writeVertexIndex(f3)
-        logging.info('the number of faces: %d', len(self.faces))
         logging.info('finished exporting faces.')
 
-        logging.info('exporting textures...')
+        logging.info('exporting textures... %d', len(self.textures))
         fs.writeInt(len(self.textures))
         for i in self.textures:
             i.save(fs)
-        logging.info('the number of textures: %d', len(self.textures))
         logging.info('finished exporting textures.')
 
-        logging.info('exporting materials...')
+        logging.info('exporting materials... %d', len(self.materials))
         fs.writeInt(len(self.materials))
         for i in self.materials:
             i.save(fs)
-        logging.info('the number of materials: %d', len(self.materials))
         logging.info('finished exporting materials.')
 
-        logging.info('exporting bones...')
+        logging.info('exporting bones... %d', len(self.bones))
         fs.writeInt(len(self.bones))
         for i in self.bones:
             i.save(fs)
-        logging.info('the number of bones: %d', len(self.bones))
         logging.info('finished exporting bones.')
 
-        logging.info('exporting morphs...')
+        logging.info('exporting morphs... %d', len(self.morphs))
         fs.writeInt(len(self.morphs))
         for i in self.morphs:
             i.save(fs)
-        logging.info('the number of morphs: %d', len(self.morphs))
         logging.info('finished exporting morphs.')
 
-        logging.info('exporting display items...')
+        logging.info('exporting display items... %d', len(self.display))
         fs.writeInt(len(self.display))
         for i in self.display:
             i.save(fs)
-        logging.info('the number of display items: %d', len(self.display))
         logging.info('finished exporting display items.')
 
-        logging.info('exporting rigid bodies...')
+        logging.info('exporting rigid bodies... %d', len(self.rigids))
         fs.writeInt(len(self.rigids))
         for i in self.rigids:
-            logging.debug('  Rigid: %s', i.name)
             i.save(fs)
-        logging.info('the number of rigid bodies: %d', len(self.rigids))
         logging.info('finished exporting rigid bodies.')
 
-        logging.info('exporting joints...')
+        logging.info('exporting joints... %d', len(self.joints))
         fs.writeInt(len(self.joints))
         for i in self.joints:
             i.save(fs)
-        logging.info('the number of joints: %d', len(self.joints))
         logging.info('finished exporting joints.')
         logging.info('finished exporting the model.')
 
@@ -817,8 +806,11 @@ class Texture:
             self.path = os.path.normpath(os.path.join(os.path.dirname(fs.path()), self.path))
 
     def save(self, fs):
-        relPath = os.path.relpath(self.path, os.path.dirname(fs.path()))
-        relPath = relPath.replace(os.path.sep, '\\') # always save using windows path conventions      
+        try:
+            relPath = os.path.relpath(self.path, os.path.dirname(fs.path()))
+        except ValueError:
+            relPath = self.path
+        relPath = relPath.replace(os.path.sep, '\\') # always save using windows path conventions
         logging.info('writing to pmx file the relative texture path: %s', relPath)
         fs.writeStr(relPath)
 

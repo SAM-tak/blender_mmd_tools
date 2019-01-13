@@ -2,10 +2,11 @@
 
 import bpy
 
+from mmd_tools.bpyutils import SceneOp
 
 class MMDLamp:
     def __init__(self, obj):
-        if obj.type == 'LAMP':
+        if MMDLamp.isLamp(obj):
             obj = obj.parent
         if obj and obj.type == 'EMPTY' and obj.mmd_type == 'LIGHT':
             self.__emptyObj = obj
@@ -14,8 +15,12 @@ class MMDLamp:
 
 
     @staticmethod
+    def isLamp(obj):
+        return obj and obj.type in {'LIGHT', 'LAMP'}
+
+    @staticmethod
     def isMMDLamp(obj):
-        if obj.type == 'LAMP':
+        if MMDLamp.isLamp(obj):
             obj = obj.parent
         return obj and obj.type == 'EMPTY' and obj.mmd_type == 'LIGHT'
 
@@ -25,13 +30,14 @@ class MMDLamp:
             return MMDLamp(lampObj)
 
         empty = bpy.data.objects.new(name='MMD_Light', object_data=None)
-        bpy.context.scene.objects.link(empty)
+        SceneOp(bpy.context).link_object(empty)
 
         empty.rotation_mode = 'XYZ'
         empty.lock_rotation = (True, True, True)
-        empty.empty_draw_size = 0.2
-        empty.scale = [20*scale] * 3
+        empty.empty_draw_size = 0.4
+        empty.scale = [10*scale] * 3
         empty.mmd_type = 'LIGHT'
+        empty.location = (0, 0, 11*scale)
 
         lampObj.parent = empty
         lampObj.data.color = (0.602, 0.602, 0.602)
@@ -53,7 +59,7 @@ class MMDLamp:
 
     def lamp(self):
         for i in self.__emptyObj.children:
-            if i.type == 'LAMP':
+            if MMDLamp.isLamp(i):
                 return i
         raise Exception
 
