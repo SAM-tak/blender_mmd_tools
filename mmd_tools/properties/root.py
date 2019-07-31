@@ -45,8 +45,7 @@ def _toggleUseSDEF(self, context):
     rig = mmd_model.Model(root)
     mute_sdef = not self.use_sdef
     for i in rig.meshes():
-        if FnSDEF.SHAPEKEY_NAME in getattr(i.data.shape_keys, 'key_blocks', ()):
-            i.data.shape_keys.key_blocks[FnSDEF.SHAPEKEY_NAME].mute = mute_sdef
+        FnSDEF.mute_sdef_set(i, mute_sdef)
 
 def _toggleVisibilityOfMeshes(self, context):
     root = self.id_data
@@ -56,6 +55,14 @@ def _toggleVisibilityOfMeshes(self, context):
         i.hide = hide
     if hide and context.active_object is None:
         SceneOp(context).active_object = root
+
+def _show_meshes_get(prop):
+    return prop.get('show_meshes', True)
+
+def _show_meshes_set(prop, v):
+    if v != prop.get('show_meshes', None):
+        prop['show_meshes'] = v
+        _toggleVisibilityOfMeshes(prop, bpy.context)
 
 def _toggleVisibilityOfRigidBodies(self, context):
     root = self.id_data
@@ -261,7 +268,9 @@ class MMDRoot(PropertyGroup):
     show_meshes = BoolProperty(
         name='Show Meshes',
         description='Show all meshes of the MMD model',
-        update=_toggleVisibilityOfMeshes,
+        get=_show_meshes_get,
+        set=_show_meshes_set,
+        #update=_toggleVisibilityOfMeshes,
     )
 
     show_rigid_bodies = BoolProperty(

@@ -33,7 +33,7 @@ class _Vertex:
         self.index = None
         self.uv = None
         self.normal = None
-        self.sdef_data = None # (C, R0, R1)
+        self.sdef_data = [] # (C, R0, R1)
         self.add_uvs = [None]*4 # UV1~UV4
 
 class _Face:
@@ -43,16 +43,11 @@ class _Face:
         self.vertices = vertices
 
 class _Mesh:
-    def __init__(self, mesh_data, material_faces, shape_key_names, vertex_group_names, materials):
-        self.mesh_data = mesh_data
+    def __init__(self, material_faces, shape_key_names, material_names):
         self.material_faces = material_faces # dict of {material_index => [face1, face2, ....]}
         self.shape_key_names = shape_key_names
-        self.vertex_group_names = vertex_group_names
-        self.materials = materials
+        self.material_names = material_names
 
-    def __del__(self):
-        logging.debug('remove mesh data: %s', str(self.mesh_data))
-        bpy.data.meshes.remove(self.mesh_data)
 
 class _DefaultMaterial:
     def __init__(self):
@@ -116,10 +111,10 @@ class __PmxExporter:
         mat_map = OrderedDict()
         for mesh in meshes:
             for index, mat_faces in sorted(mesh.material_faces.items(), key=lambda x: x[0]):
-                name = mesh.materials[index].name
+                name = mesh.material_names[index]
                 if name not in mat_map:
                     mat_map[name] = []
-                mat_map[name].append((mat_faces, mesh.vertex_group_names))
+                mat_map[name].append(mat_faces)
 
         sort_vertices = self.__vertex_order_map is not None
         if sort_vertices:
@@ -128,7 +123,7 @@ class __PmxExporter:
         # export vertices
         for mat_name, mat_meshes in mat_map.items():
             face_count = 0
-            for mat_faces, vertex_group_names in mat_meshes:
+            for mat_faces in mat_meshes:
                 mesh_vertices = []
                 for face in mat_faces:
                     mesh_vertices.extend(face.vertices)
@@ -142,7 +137,7 @@ class __PmxExporter:
                         self.__vertex_order_map[v.index] = v
 
                     pv = pmx.Vertex()
-                    pv.co = list(v.co)
+                    pv.co = v.co
                     pv.normal = v.normal
                     pv.uv = self.flipUV_V(v.uv)
                     pv.edge_scale = v.edge_scale
@@ -159,16 +154,13 @@ class __PmxExporter:
                     elif t == 1:
                         weight = pmx.BoneWeight()
                         weight.type = pmx.BoneWeight.BDEF1
-                        weight.bones = [bone_map[vertex_group_names[v.groups[0][0]]]]
+                        weight.bones = [v.groups[0][0]]
                         pv.weight = weight
                     elif t == 2:
                         vg1, vg2 = v.groups
                         weight = pmx.BoneWeight()
                         weight.type = pmx.BoneWeight.BDEF2
-                        weight.bones = [
-                            bone_map[vertex_group_names[vg1[0]]],
-                            bone_map[vertex_group_names[vg2[0]]]
-                            ]
+                        weight.bones = [vg1[0], vg2[0]]
                         w1, w2 = vg1[1], vg2[1]
                         weight.weights = [w1/(w1+w2)]
                         if v.sdef_data:
@@ -187,9 +179,11 @@ class __PmxExporter:
                         weight.bones = [0, 0, 0, 0]
                         weight.weights = [0.0, 0.0, 0.0, 0.0]
                         w_all = 0.0
-                        for i in range(min(len(v.groups), 4)):
+                        if t > 4:
+                            v.groups.sort(key=lambda x: -x[1])
+                        for i in range(min(t, 4)):
                             gn, w = v.groups[i]
-                            weight.bones[i] = bone_map[vertex_group_names[gn]]
+                            weight.bones[i] = gn
                             weight.weights[i] = w
                             w_all += w
                         for i in range(4):
@@ -442,42 +436,24 @@ class __PmxExporter:
         logging.debug('    Create IK Link for %s', pose_bone.name)
         ik_link = pmx.IKLink()
         ik_link.target = bone_map[pose_bone.name]
-        if pose_bone.use_ik_limit_x or pose_bone.use_ik_limit_y or pose_bone.use_ik_limit_z:
-            minimum = []
-            maximum = []
-            if pose_bone.use_ik_limit_x:
-                minimum.append(pose_bone.ik_min_x)
-                maximum.append(pose_bone.ik_max_x)
+
+        from math import pi
+        minimum, maximum = [-pi]*3, [pi]*3
+        unused_counts = 0
+        ik_limit_override = next((c for c in pose_bone.constraints if c.type == 'LIMIT_ROTATION' and not c.mute), None)
+        for i, axis in enumerate('xyz'):
+            if getattr(pose_bone, 'lock_ik_'+axis):
+                minimum[i] = maximum[i] = 0
+            elif ik_limit_override is not None and getattr(ik_limit_override, 'use_limit_'+axis):
+                minimum[i] = getattr(ik_limit_override, 'min_'+axis)
+                maximum[i] = getattr(ik_limit_override, 'max_'+axis)
+            elif getattr(pose_bone, 'use_ik_limit_'+axis):
+                minimum[i] = getattr(pose_bone, 'ik_min_'+axis)
+                maximum[i] = getattr(pose_bone, 'ik_max_'+axis)
             else:
-                minimum.append(0.0)
-                maximum.append(0.0)
+                unused_counts += 1
 
-            if pose_bone.use_ik_limit_y:
-                minimum.append(pose_bone.ik_min_y)
-                maximum.append(pose_bone.ik_max_y)
-            else:
-                minimum.append(0.0)
-                maximum.append(0.0)
-
-            if pose_bone.use_ik_limit_z:
-                minimum.append(pose_bone.ik_min_z)
-                maximum.append(pose_bone.ik_max_z)
-            else:
-                minimum.append(0.0)
-                maximum.append(0.0)
-
-            ik_limit_override = pose_bone.constraints.get('mmd_ik_limit_override', None)
-            if ik_limit_override:
-                if ik_limit_override.use_limit_x:
-                    minimum[0] = ik_limit_override.min_x
-                    maximum[0] = ik_limit_override.max_x
-                if ik_limit_override.use_limit_y:
-                    minimum[1] = ik_limit_override.min_y
-                    maximum[1] = ik_limit_override.max_y
-                if ik_limit_override.use_limit_z:
-                    minimum[2] = ik_limit_override.min_z
-                    maximum[2] = ik_limit_override.max_z
-
+        if unused_counts < 3:
             convertIKLimitAngles = pmx.importer.PMXImporter.convertIKLimitAngles
             bone_matrix = matmul(pose_bone.id_data.matrix_world, pose_bone.matrix)
             minimum, maximum = convertIKLimitAngles(minimum, maximum, bone_matrix, invert=True)
@@ -976,7 +952,7 @@ class __PmxExporter:
         return custom_normals
 
     def __doLoadMeshData(self, meshObj, bone_map):
-        vertex_group_names = {i:x.name for i, x in enumerate(meshObj.vertex_groups) if x.name in bone_map}
+        vg_to_bone = {i:bone_map[x.name] for i, x in enumerate(meshObj.vertex_groups) if x.name in bone_map}
         vg_edge_scale = meshObj.vertex_groups.get('mmd_edge_scale', None)
         vg_vertex_order = meshObj.vertex_groups.get('mmd_vertex_order', None)
 
@@ -991,22 +967,32 @@ class __PmxExporter:
 
         if bpy.app.version < (2, 80, 0):
             _to_mesh = lambda obj: obj.to_mesh(bpy.context.scene, apply_modifiers=True, settings='PREVIEW', calc_tessface=False, calc_undeformed=False)
+            _to_mesh_clear = lambda obj, mesh: bpy.data.meshes.remove(mesh)
+        elif hasattr(bpy.context, 'depsgraph'): #XXX
+            def _to_mesh(obj):
+                bpy.context.view_layer.update()
+                return obj.to_mesh(bpy.context.depsgraph, apply_modifiers=True, calc_undeformed=False)
+            _to_mesh_clear = lambda obj, mesh: bpy.data.meshes.remove(mesh)
         else:
-            _to_mesh = lambda obj: obj.to_mesh(bpy.context.depsgraph, apply_modifiers=True, calc_undeformed=False)
+            def _to_mesh(obj):
+                bpy.context.view_layer.update()
+                depsgraph = bpy.context.evaluated_depsgraph_get()
+                return obj.evaluated_get(depsgraph).to_mesh(depsgraph=depsgraph, preserve_all_data_layers=True)
+            _to_mesh_clear = lambda obj, mesh: obj.to_mesh_clear()
 
         base_mesh = _to_mesh(meshObj)
         loop_normals = self.__triangulate(base_mesh, self.__get_normals(base_mesh, normal_matrix))
         base_mesh.transform(pmx_matrix)
 
-        def _get_weight(vertex_group, vertex, default_weight):
+        def _get_weight(vertex_group_index, vertex, default_weight):
             for i in vertex.groups:
-                if i.group == vertex_group.index:
-                    return vertex_group.weight(vertex.index)
+                if i.group == vertex_group_index:
+                    return i.weight
             return default_weight
 
         get_edge_scale = None
         if vg_edge_scale:
-            get_edge_scale = lambda x: _get_weight(vg_edge_scale, x, 1)
+            get_edge_scale = lambda x: _get_weight(vg_edge_scale.index, x, 1)
         else:
             get_edge_scale = lambda x: 1
 
@@ -1015,7 +1001,7 @@ class __PmxExporter:
             mesh_id = self.__vertex_order_map.setdefault('mesh_id', 0)
             self.__vertex_order_map['mesh_id'] += 1
             if vg_vertex_order and self.__vertex_order_map['method'] == 'CUSTOM':
-                get_vertex_order = lambda x: (mesh_id, _get_weight(vg_vertex_order, x, 2), x.index)
+                get_vertex_order = lambda x: (mesh_id, _get_weight(vg_vertex_order.index, x, 2), x.index)
             else:
                 get_vertex_order = lambda x: (mesh_id, x.index)
         else:
@@ -1034,13 +1020,71 @@ class __PmxExporter:
         base_vertices = {}
         for v in base_mesh.vertices:
             base_vertices[v.index] = [_Vertex(
-                v.co,
-                [(x.group, x.weight) for x in v.groups if x.weight > 0 and x.group in vertex_group_names],
+                v.co.copy(),
+                [(vg_to_bone[x.group], x.weight) for x in v.groups if x.weight > 0 and x.group in vg_to_bone],
                 {},
                 get_edge_scale(v),
                 get_vertex_order(v),
                 get_uv_offsets(v),
                 )]
+
+        # load face data
+        class _DummyUV:
+            uv1 = uv2 = uv3 = mathutils.Vector((0, 1))
+            def __init__(self, uvs):
+                self.uv1,  self.uv2, self.uv3 = (v.uv.copy() for v in uvs)
+
+        _UVWrapper = lambda x: (_DummyUV(x[i:i+3]) for i in range(0, len(x), 3))
+
+        material_faces = {}
+        uv_data = base_mesh.uv_layers.active
+        if uv_data:
+            uv_data = _UVWrapper(uv_data.data)
+        else:
+            uv_data = iter(lambda: _DummyUV, None)
+        face_seq = []
+        for face, uv in zip(base_mesh.polygons, uv_data):
+            if len(face.vertices) != 3:
+                raise Exception
+            idx = face.index * 3
+            n1, n2, n3 = loop_normals[idx:idx+3]
+            v1 = self.__convertFaceUVToVertexUV(face.vertices[0], uv.uv1, n1, base_vertices)
+            v2 = self.__convertFaceUVToVertexUV(face.vertices[1], uv.uv2, n2, base_vertices)
+            v3 = self.__convertFaceUVToVertexUV(face.vertices[2], uv.uv3, n3, base_vertices)
+
+            t = _Face([v1, v2, v3])
+            face_seq.append(t)
+            if face.material_index not in material_faces:
+                material_faces[face.material_index] = []
+            material_faces[face.material_index].append(t)
+
+        _mat_name = lambda x: x.name if x else self.__getDefaultMaterial().name
+        material_names = {i:_mat_name(m) for i, m in enumerate(base_mesh.materials)}
+        material_names = {i:material_names.get(i, None) or _mat_name(None) for i in material_faces.keys()}
+
+        # export add UV
+        bl_add_uvs = [i for i in base_mesh.uv_layers[1:] if not i.name.startswith('_')]
+        self.__add_uv_count = max(self.__add_uv_count, len(bl_add_uvs))
+        for uv_n, uv_tex in enumerate(bl_add_uvs):
+            if uv_n > 3:
+                logging.warning(' * extra addUV%d+ are not supported', uv_n+1)
+                break
+            uv_data = _UVWrapper(uv_tex.data)
+            zw_data = base_mesh.uv_layers.get('_'+uv_tex.name, None)
+            logging.info(' # exporting addUV%d: %s [zw: %s]', uv_n+1, uv_tex.name, zw_data)
+            if zw_data:
+                zw_data = _UVWrapper(zw_data.data)
+            else:
+                zw_data = iter(lambda: _DummyUV, None)
+            rip_vertices_map = {}
+            for f, face, uv, zw in zip(face_seq, base_mesh.polygons, uv_data, zw_data):
+                vertices = [base_vertices[x] for x in face.vertices]
+                rip_vertices = [rip_vertices_map.setdefault(x, [x]) for x in f.vertices]
+                f.vertices[0] = self.__convertAddUV(f.vertices[0], uv.uv1, zw.uv1, uv_n, vertices[0], rip_vertices[0])
+                f.vertices[1] = self.__convertAddUV(f.vertices[1], uv.uv2, zw.uv2, uv_n, vertices[1], rip_vertices[1])
+                f.vertices[2] = self.__convertAddUV(f.vertices[2], uv.uv3, zw.uv3, uv_n, vertices[2], rip_vertices[2])
+
+        _to_mesh_clear(meshObj, base_mesh)
 
         # calculate offsets
         shape_key_list = []
@@ -1065,7 +1109,7 @@ class __PmxExporter:
             mesh = _to_mesh(meshObj)
             mesh.transform(pmx_matrix)
             kb.mute = kb_mute
-            if len(mesh.vertices) != len(base_mesh.vertices):
+            if len(mesh.vertices) != len(base_vertices):
                 logging.warning('   * Error! vertex count mismatch!')
                 continue
             if shape_key_name in {'mmd_sdef_c', 'mmd_sdef_r0', 'mmd_sdef_r1'}:
@@ -1078,7 +1122,7 @@ class __PmxExporter:
                         c_co = v.co
                         if (c_co - base_co).length < 0.001:
                             continue
-                        base.sdef_data = [tuple(c_co), base_co, base_co]
+                        base.sdef_data[:] = tuple(c_co), base_co, base_co
                         sdef_counts += 1
                     logging.info('   - Restored %d SDEF vertices', sdef_counts)
                 elif sdef_counts > 0:
@@ -1096,78 +1140,16 @@ class __PmxExporter:
                     if offset.length < 0.001:
                         continue
                     base.offsets[shape_key_name] = offset
-            bpy.data.meshes.remove(mesh)
-
-        # load face data
-        class _DummyUV:
-            uv1 = uv2 = uv3 = mathutils.Vector((0, 1))
-            def __init__(self, uvs):
-                self.uv1,  self.uv2, self.uv3 = (v.uv for v in uvs)
-
-        _UVWrapper = lambda x: (_DummyUV(x[i:i+3]) for i in range(0, len(x), 3))
-
-        materials = {}
-        uv_data = base_mesh.uv_layers.active
-        if uv_data:
-            uv_data = _UVWrapper(uv_data.data)
-        else:
-            uv_data = iter(lambda: _DummyUV, None)
-        face_seq = []
-        for face, uv in zip(base_mesh.polygons, uv_data):
-            if len(face.vertices) != 3:
-                raise Exception
-            idx = face.index * 3
-            n1, n2, n3 = loop_normals[idx:idx+3]
-            v1 = self.__convertFaceUVToVertexUV(face.vertices[0], uv.uv1, n1, base_vertices)
-            v2 = self.__convertFaceUVToVertexUV(face.vertices[1], uv.uv2, n2, base_vertices)
-            v3 = self.__convertFaceUVToVertexUV(face.vertices[2], uv.uv3, n3, base_vertices)
-
-            t = _Face([v1, v2, v3])
-            face_seq.append(t)
-            if face.material_index not in materials:
-                materials[face.material_index] = []
-            materials[face.material_index].append(t)
-
-        # assign default material
-        if len(base_mesh.materials) < len(materials):
-            base_mesh.materials.append(self.__getDefaultMaterial())
-        else:
-            for i, m in enumerate(base_mesh.materials):
-                if m is None:
-                    base_mesh.materials[i] = self.__getDefaultMaterial()
-
-        # export add UV
-        bl_add_uvs = [i for i in base_mesh.uv_layers[1:] if not i.name.startswith('_')]
-        self.__add_uv_count = max(self.__add_uv_count, len(bl_add_uvs))
-        for uv_n, uv_tex in enumerate(bl_add_uvs):
-            if uv_n > 3:
-                logging.warning(' * extra addUV%d+ are not supported', uv_n+1)
-                break
-            uv_data = _UVWrapper(uv_tex.data)
-            zw_data = base_mesh.uv_layers.get('_'+uv_tex.name, None)
-            logging.info(' # exporting addUV%d: %s [zw: %s]', uv_n+1, uv_tex.name, zw_data)
-            if zw_data:
-                zw_data = _UVWrapper(zw_data.data)
-            else:
-                zw_data = iter(lambda: _DummyUV, None)
-            rip_vertices_map = {}
-            for f, face, uv, zw in zip(face_seq, base_mesh.polygons, uv_data, zw_data):
-                vertices = [base_vertices[x] for x in face.vertices]
-                rip_vertices = [rip_vertices_map.setdefault(x, [x]) for x in f.vertices]
-                f.vertices[0] = self.__convertAddUV(f.vertices[0], uv.uv1, zw.uv1, uv_n, vertices[0], rip_vertices[0])
-                f.vertices[1] = self.__convertAddUV(f.vertices[1], uv.uv2, zw.uv2, uv_n, vertices[1], rip_vertices[1])
-                f.vertices[2] = self.__convertAddUV(f.vertices[2], uv.uv3, zw.uv3, uv_n, vertices[2], rip_vertices[2])
+            _to_mesh_clear(meshObj, mesh)
 
         if not pmx_matrix.is_negative: # pmx.load/pmx.save reverse face vertices by default
             for f in face_seq:
                 f.vertices.reverse()
 
         return _Mesh(
-            base_mesh,
-            materials,
+            material_faces,
             shape_key_names,
-            vertex_group_names,
-            base_mesh.materials)
+            material_names)
 
     def __loadMeshData(self, meshObj, bone_map):
         show_only_shape_key = meshObj.show_only_shape_key

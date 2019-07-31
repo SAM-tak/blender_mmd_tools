@@ -14,6 +14,28 @@ from mmd_tools.core.camera import MMDCamera
 from mmd_tools.core.lamp import MMDLamp
 
 
+class _MirrorMapper:
+    def __init__(self, data_map=None):
+        from mmd_tools.operators.view import FlipPose
+        self.__data_map = data_map
+        self.__flip_name = FlipPose.flip_name
+
+    def get(self, name, default=None):
+        return self.__data_map.get(self.__flip_name(name), None) or self.__data_map.get(name, default)
+
+    @staticmethod
+    def get_location(location):
+        return (-location[0], location[1], location[2])
+
+    @staticmethod
+    def get_rotation(rotation_xyzw):
+        return (rotation_xyzw[0], -rotation_xyzw[1], -rotation_xyzw[2], rotation_xyzw[3])
+
+    @staticmethod
+    def get_rotation3(rotation_xyz):
+        return (rotation_xyz[0], -rotation_xyz[1], -rotation_xyz[2])
+
+
 class RenamedBoneMapper:
     def __init__(self, armObj=None, rename_LR_bones=True, use_underscore=False, translator=None):
         self.__pose_bones = armObj.pose.bones if armObj else None
@@ -34,6 +56,21 @@ class RenamedBoneMapper:
         return self.__pose_bones.get(bl_bone_name, default)
 
 
+class _InterpolationHelper:
+    def __init__(self, mat):
+        self.__indices = indices = [0, 1, 2]
+        l = sorted((-abs(mat[i][j]), i, j) for i in range(3) for j in range(3))
+        _, i, j = l[0]
+        if i != j:
+            indices[i], indices[j] = indices[j], indices[i]
+        _, i, j = next(k for k in l if k[1] != i and k[2] != j)
+        if indices[i] != j:
+            idx = indices.index(j)
+            indices[i], indices[idx] = indices[idx], indices[i]
+
+    def convert(self, interpolation_xyz):
+        return (interpolation_xyz[i] for i in self.__indices)
+
 class BoneConverter:
     def __init__(self, pose_bone, scale, invert=False):
         mat = pose_bone.bone.matrix_local.to_3x3()
@@ -42,6 +79,7 @@ class BoneConverter:
         self.__scale = scale
         if invert:
             self.__mat.invert()
+        self.convert_interpolation = _InterpolationHelper(self.__mat).convert
 
     def convert_location(self, location):
         return matmul(self.__mat, Vector(location)) * self.__scale
@@ -68,6 +106,7 @@ class BoneConverterPoseMode:
             self.__mat_loc.invert()
             self.convert_location = self._convert_location_inverted
             self.convert_rotation = self._convert_rotation_inverted
+        self.convert_interpolation = _InterpolationHelper(self.__mat_loc).convert
 
     def _convert_location(self, location):
         return self.__offset + matmul(self.__mat_loc, Vector(location)) * self.__scale
@@ -88,9 +127,124 @@ class BoneConverterPoseMode:
         return Quaternion(matmul(self.__mat, rot.axis) * -1, rot.angle).normalized()
 
 
+class _FnBezier:
+    @classmethod
+    def from_fcurve(cls, kp0, kp1):
+        p0, p1, p2, p3 = kp0.co, kp0.handle_right, kp1.handle_left, kp1.co
+        if p1.x > p2.x: # F-Curve correction
+            t = (p3.x - p0.x) / (p1.x - p0.x + p3.x - p2.x)
+            p1 = (1-t)*p0 + p1*t
+            p2 = (1-t)*p3 + p2*t
+        return cls(p0, p1, p2, p3)
+
+    def __init__(self, p0, p1, p2, p3): # assuming VMD's bezier or F-Curve's bezier
+        #assert(p0.x <= p1.x <= p3.x and p0.x <= p2.x <= p3.x)
+        self._p0, self._p1, self._p2, self._p3 = p0, p1, p2, p3
+
+    @property
+    def points(self):
+        return self._p0, self._p1, self._p2, self._p3
+
+    def split(self, t):
+        p0, p1, p2, p3 = self._p0, self._p1, self._p2, self._p3
+        p01t = (1-t)*p0 + t*p1
+        p12t = (1-t)*p1 + t*p2
+        p23t = (1-t)*p2 + t*p3
+        p012t = (1-t)*p01t + t*p12t
+        p123t = (1-t)*p12t + t*p23t
+        pt = (1-t)*p012t + t*p123t
+        return _FnBezier(p0, p01t, p012t, pt), _FnBezier(pt, p123t, p23t, p3), pt
+
+    def evaluate(self, t):
+        p0, p1, p2, p3 = self._p0, self._p1, self._p2, self._p3
+        p01t = (1-t)*p0 + t*p1
+        p12t = (1-t)*p1 + t*p2
+        p23t = (1-t)*p2 + t*p3
+        p012t = (1-t)*p01t + t*p12t
+        p123t = (1-t)*p12t + t*p23t
+        return (1-t)*p012t + t*p123t
+
+    def split_by_x(self, x):
+        return self.split(self.axis_to_t(x))
+
+    def evaluate_by_x(self, x):
+        return self.evaluate(self.axis_to_t(x))
+
+    def axis_to_t(self, val, axis=0):
+        p0, p1, p2, p3 = self._p0[axis], self._p1[axis], self._p2[axis], self._p3[axis]
+        a = p3 - p0 + 3 * (p1 - p2)
+        b = 3 * (p0 - 2*p1 + p2)
+        c = 3 * (p1 - p0)
+        d = p0 - val
+        return next(self.__find_roots(a, b, c, d))
+
+    def find_critical(self):
+        p0, p1, p2, p3 = self._p0.y, self._p1.y, self._p2.y, self._p3.y
+        p_min, p_max = (p0, p3) if p0 < p3 else (p3, p0)
+        if p1 > p_max or p1 < p_min or p2 > p_max or p2 < p_min:
+            a = 3 * (p3 - p0 + 3 * (p1 - p2))
+            b = 6 * (p0 - 2*p1 + p2)
+            c = 3 * (p1 - p0)
+            yield from self.__find_roots(0, a, b, c)
+
+    @staticmethod
+    def __find_roots(a, b, c, d): # a*t*t*t + b*t*t + c*t + d = 0
+        #TODO fix precision errors (ex: t=0 and t=1) and improve performance
+        if a == 0:
+            if b == 0:
+                t = -d/c
+                if 0 <= t <= 1:
+                    yield t
+            else:
+                D = c*c - 4*b*d
+                if D < 0:
+                    return
+                D = D**0.5
+                b2 = 2*b
+                t = (-c + D)/b2
+                if 0 <= t <= 1:
+                    yield t
+                t = (-c - D)/b2
+                if 0 <= t <= 1:
+                    yield t
+            return
+
+        def _sqrt3(v):
+            return -((-v)**(1/3)) if v < 0 else v**(1/3)
+
+        A = b*c/(6*a*a) - b*b*b/(27*a*a*a) - d/(2*a)
+        B = c/(3*a) - b*b/(9*a*a)
+        b_3a = -b/(3*a)
+        D = A*A + B*B*B
+
+        if D > 0:
+            D = D**0.5
+            t = b_3a + _sqrt3(A+D) + _sqrt3(A-D)
+            if 0 <= t <= 1:
+                yield t
+        elif D == 0:
+            t = b_3a + _sqrt3(A)*2
+            if 0 <= t <= 1:
+                yield t
+            t = b_3a - _sqrt3(A)
+            if 0 <= t <= 1:
+                yield t
+        else:
+            R = A / (-B*B*B)**0.5
+            t = b_3a + 2*(-B)**0.5 * math.cos(math.acos(R) / 3)
+            if 0 <= t <= 1:
+                yield t
+            t = b_3a + 2*(-B)**0.5 * math.cos((math.acos(R) + 2*math.pi) / 3)
+            if 0 <= t <= 1:
+                yield t
+            t = b_3a + 2*(-B)**0.5 * math.cos((math.acos(R) - 2*math.pi) / 3)
+            if 0 <= t <= 1:
+                yield t
+
+
 class VMDImporter:
     def __init__(self, filepath, scale=1.0, bone_mapper=None, use_pose_mode=False,
-            convert_mmd_camera=True, convert_mmd_lamp=True, frame_margin=5):
+            convert_mmd_camera=True, convert_mmd_lamp=True, frame_margin=5, use_mirror=False):
         self.__vmdFile = vmd.File()
         self.__vmdFile.load(filepath=filepath)
         self.__scale = scale
@@ -99,6 +253,7 @@ class VMDImporter:
         self.__bone_mapper = bone_mapper
         self.__bone_util_cls = BoneConverterPoseMode if use_pose_mode else BoneConverter
         self.__frame_margin = frame_margin + 1
+        self.__mirror = use_mirror
 
 
     @staticmethod
@@ -120,17 +275,19 @@ class VMDImporter:
             kp0.interpolation = 'LINEAR'
         else:
             kp0.interpolation = 'BEZIER'
-            kp0.handle_right_type = 'FREE'
-            kp1.handle_left_type = 'FREE'
-            d = (kp1.co - kp0.co) / 127.0
-            kp0.handle_right = kp0.co + Vector((d.x * bezier[0], d.y * bezier[1]))
-            kp1.handle_left = kp0.co + Vector((d.x * bezier[2], d.y * bezier[3]))
+        kp0.handle_right_type = 'FREE'
+        kp1.handle_left_type = 'FREE'
+        d = (kp1.co - kp0.co) / 127.0
+        kp0.handle_right = kp0.co + Vector((d.x * bezier[0], d.y * bezier[1]))
+        kp1.handle_left = kp0.co + Vector((d.x * bezier[2], d.y * bezier[3]))
 
     @staticmethod
     def __fixFcurveHandles(fcurve):
         kp0 = fcurve.keyframe_points[0]
+        kp0.handle_left_type = 'FREE'
         kp0.handle_left = kp0.co + Vector((-1, 0))
         kp = fcurve.keyframe_points[-1]
+        kp.handle_right_type = 'FREE'
         kp.handle_right = kp.co + Vector((1, 0))
 
 
@@ -149,6 +306,12 @@ class VMDImporter:
         pose_bones = armObj.pose.bones
         if self.__bone_mapper:
             pose_bones = self.__bone_mapper(armObj)
+
+        _loc = _rot = lambda i: i
+        if self.__mirror:
+            pose_bones = _MirrorMapper(pose_bones)
+            _loc, _rot = _MirrorMapper.get_location, _MirrorMapper.get_rotation
+
         bone_name_table = {}
         for name, keyFrames in boneAnim.items():
             num_frame = len(keyFrames)
@@ -182,12 +345,12 @@ class VMDImporter:
 
             converter = self.__bone_util_cls(bone, self.__scale)
             prev_rot = bone.rotation_quaternion if extra_frame else None
-            prev_kps, indices = None, (0, 32, 16, 48, 48, 48, 48) # x, z, y, rw, rx, ry, rz
+            prev_kps, indices = None, tuple(converter.convert_interpolation((0, 16, 32)))+(48,)*4
             keyFrames.sort(key=lambda x:x.frame_number)
             for k, x, y, z, rw, rx, ry, rz in zip(keyFrames, *fcurves):
                 frame = k.frame_number + self.__frame_margin
-                loc = converter.convert_location(k.location)
-                curr_rot = converter.convert_rotation(k.rotation)
+                loc = converter.convert_location(_loc(k.location))
+                curr_rot = converter.convert_rotation(_rot(k.rotation))
                 if prev_rot is not None:
                     curr_rot = self.__minRotationDiff(prev_rot, curr_rot)
                 prev_rot = curr_rot
@@ -210,6 +373,24 @@ class VMDImporter:
         for c in action.fcurves:
             self.__fixFcurveHandles(c)
 
+        # ensure IK's default state
+        for b in armObj.pose.bones:
+            if not b.mmd_ik_toggle:
+                b.mmd_ik_toggle = True
+
+        # property animation
+        propertyAnim = self.__vmdFile.propertyAnimation
+        if len(propertyAnim) < 1:
+            return
+        logging.info('---- IK animations:%5d  target: %s', len(propertyAnim), armObj.name)
+        for keyFrame in propertyAnim:
+            frame = keyFrame.frame_number + self.__frame_margin
+            for ikName, enable in keyFrame.ik_states:
+                bone = pose_bones.get(ikName, None)
+                if bone:
+                    bone.mmd_ik_toggle = enable
+                    bone.keyframe_insert(data_path='mmd_ik_toggle', frame=frame)
+
 
     def __assignToMesh(self, meshObj, action_name=None):
         shapeKeyAnim = self.__vmdFile.shapeKeyAnimation
@@ -221,9 +402,8 @@ class VMDImporter:
         action = bpy.data.actions.new(name=action_name)
         meshObj.data.shape_keys.animation_data_create().action = action
 
-        shapeKeyDict = {}
-        for i in meshObj.data.shape_keys.key_blocks:
-            shapeKeyDict[i.name] = i
+        mirror_map = _MirrorMapper(meshObj.data.shape_keys.key_blocks) if self.__mirror else {}
+        shapeKeyDict = {k:mirror_map.get(k, v) for k, v in meshObj.data.shape_keys.key_blocks.items()}
 
         from math import floor, ceil
         for name, keyFrames in shapeKeyAnim.items():
@@ -241,6 +421,22 @@ class VMDImporter:
             weights = tuple(i.weight for i in keyFrames)
             shapeKey.slider_min = min(shapeKey.slider_min, floor(min(weights)))
             shapeKey.slider_max = max(shapeKey.slider_max, ceil(max(weights)))
+
+
+    def __assignToRoot(self, rootObj, action_name=None):
+        propertyAnim = self.__vmdFile.propertyAnimation
+        logging.info('---- display animations:%5d  target: %s', len(propertyAnim), rootObj.name)
+        if len(propertyAnim) < 1:
+            return
+
+        action_name = action_name or rootObj.name
+        action = bpy.data.actions.new(name=action_name)
+        rootObj.animation_data_create().action = action
+
+        for keyFrame in propertyAnim:
+            rootObj.mmd_root.show_meshes = keyFrame.visible
+            rootObj.keyframe_insert(data_path='mmd_root.show_meshes',
+                                    frame=keyFrame.frame_number+self.__frame_margin)
 
 
     @staticmethod
@@ -270,6 +466,10 @@ class VMDImporter:
         mmdCamera.animation_data_create().action = parent_action
         cameraObj.animation_data_create().action = distance_action
 
+        _loc = _rot = lambda i: i
+        if self.__mirror:
+            _loc, _rot = _MirrorMapper.get_location, _MirrorMapper.get_rotation3
+
         fcurves = []
         for i in range(3):
             fcurves.append(parent_action.fcurves.new(data_path='location', index=i)) # x, y, z
@@ -285,8 +485,8 @@ class VMDImporter:
         cameraAnim.sort(key=lambda x:x.frame_number)
         for k, x, y, z, rx, ry, rz, fov, persp, dis in zip(cameraAnim, *(c.keyframe_points for c in fcurves)):
             frame = k.frame_number + self.__frame_margin
-            x.co, z.co, y.co = ((frame, val*self.__scale) for val in k.location)
-            rx.co, rz.co, ry.co = ((frame, val) for val in k.rotation)
+            x.co, z.co, y.co = ((frame, val*self.__scale) for val in _loc(k.location))
+            rx.co, rz.co, ry.co = ((frame, val) for val in _rot(k.rotation))
             fov.co = (frame, math.radians(k.angle))
             dis.co = (frame, k.distance*self.__scale)
             persp.co = (frame, k.persp)
@@ -311,6 +511,7 @@ class VMDImporter:
         frameCount = len(frames)
         frames.sort(key=lambda x:x.co[0])
         for i, f in enumerate(frames):
+            f.interpolation = 'LINEAR'
             if i+1 < frameCount:
                 n = frames[i+1]
                 if n.co[0] - f.co[0] <= 1.0 and abs(f.co[1] - n.co[1]) > threshold:
@@ -332,10 +533,11 @@ class VMDImporter:
         lampObj.data.animation_data_create().action = color_action
         lampObj.animation_data_create().action = location_action
 
+        _loc = _MirrorMapper.get_location if self.__mirror else lambda i: i
         for keyFrame in lampAnim:
             frame = keyFrame.frame_number + self.__frame_margin
             lampObj.data.color = Vector(keyFrame.color)
-            lampObj.location = Vector(keyFrame.direction).xzy * -1
+            lampObj.location = Vector(_loc(keyFrame.direction)).xzy * -1
             lampObj.data.keyframe_insert(data_path='color', frame=frame)
             lampObj.keyframe_insert(data_path='location', frame=frame)
 
@@ -361,6 +563,8 @@ class VMDImporter:
             self.__assignToCamera(obj, action_name+'_camera')
         elif obj.type == 'LAMP' and self.__convert_mmd_lamp:
             self.__assignToLamp(obj, action_name+'_lamp')
+        elif obj.mmd_type == 'ROOT':
+            self.__assignToRoot(obj, action_name+'_display')
         else:
             pass
 

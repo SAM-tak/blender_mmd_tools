@@ -89,7 +89,7 @@ class _FnMaterialBI:
 
 
     def __same_image_file(self, image, filepath):
-        if image and image.source == 'FILE' and image.use_alpha:
+        if image and image.source == 'FILE':
             img_filepath = bpy.path.abspath(image.filepath) # image.filepath_from_user()
             if img_filepath == filepath:
                 return True
@@ -100,30 +100,32 @@ class _FnMaterialBI:
         return False
 
     def _load_image(self, filepath):
-        for i in bpy.data.images:
-            if self.__same_image_file(i, filepath):
-                return i
-
-        try:
-            return bpy.data.images.load(filepath)
-        except:
-            logging.warning('Cannot create a texture for %s. No such file.', filepath)
-
-        img = bpy.data.images.new(os.path.basename(filepath), 1, 1)
-        img.source = 'FILE'
-        img.filepath = filepath
+        img = next((i for i in bpy.data.images if self.__same_image_file(i, filepath)), None)
+        if img is None:
+            try:
+                img = bpy.data.images.load(filepath)
+            except:
+                logging.warning('Cannot create a texture for %s. No such file.', filepath)
+                img = bpy.data.images.new(os.path.basename(filepath), 1, 1)
+                img.source = 'FILE'
+                img.filepath = filepath
+            use_alpha = (img.depth == 32 and img.file_format != 'BMP')
+            if hasattr(img, 'use_alpha'):
+                img.use_alpha = use_alpha
+            elif not use_alpha:
+                img.alpha_mode = 'NONE'
         return img
 
     def __load_texture(self, filepath):
-        for t in bpy.data.textures:
-            if t.type == 'IMAGE' and self.__same_image_file(t.image, filepath) and t.use_alpha:
-                return t
-        tex = bpy.data.textures.new(name=bpy.path.display_name_from_filepath(filepath), type='IMAGE')
-        tex.image = self._load_image(filepath)
+        tex = next((t for t in bpy.data.textures if t.type == 'IMAGE' and self.__same_image_file(t.image, filepath)), None)
+        if tex is None:
+            tex = bpy.data.textures.new(name=bpy.path.display_name_from_filepath(filepath), type='IMAGE')
+            tex.image = self._load_image(filepath)
+            tex.use_alpha = tex.image.use_alpha
         return tex
 
     def __has_alpha_channel(self, texture):
-        return texture.type == 'IMAGE' and getattr(texture.image, 'depth', -1) == 32
+        return texture.type == 'IMAGE' and getattr(texture.image, 'use_alpha', False)
 
 
     def get_texture(self):
@@ -291,7 +293,7 @@ class _FnMaterialBI:
     def update_diffuse_color(self):
         mat = self.__material
         mmd_mat = mat.mmd_material
-        mat.diffuse_color = self._mixDiffuseAndAmbient(mmd_mat)
+        mat.diffuse_color[:3] = self._mixDiffuseAndAmbient(mmd_mat)
         mat.diffuse_intensity = 0.8
 
     def update_alpha(self):
@@ -403,22 +405,27 @@ class _FnMaterialCycles(_FnMaterialBI):
 
     def create_sphere_texture(self, filepath, obj=None):
         texture = self.__create_texture_node('mmd_sphere_tex', filepath, (-2, -2))
-        sphere_texture_type = int(self.material.mmd_material.sphere_texture_type)
-        texture.color_space = 'NONE' if sphere_texture_type == 2 else 'COLOR'
         self.update_sphere_texture_type(obj)
         return _DummyTextureSlot(texture.image)
 
     def update_sphere_texture_type(self, obj=None):
         sphere_texture_type = int(self.material.mmd_material.sphere_texture_type)
+        is_sph_add = (sphere_texture_type == 2)
+
         if sphere_texture_type not in (1, 2, 3):
             self.__update_shader_input('Sphere Tex Fac', 0)
         else:
             self.__update_shader_input('Sphere Tex Fac', 1)
-            self.__update_shader_input('Sphere Mul/Add', sphere_texture_type == 2)
-            self.__update_shader_input('Sphere Tex', (0, 0, 0, 1) if sphere_texture_type == 2 else (1, 1, 1, 1))
+            self.__update_shader_input('Sphere Mul/Add', is_sph_add)
+            self.__update_shader_input('Sphere Tex', (0, 0, 0, 1) if is_sph_add else (1, 1, 1, 1))
 
             texture = self.__get_texture_node('mmd_sphere_tex')
             if texture:
+                if hasattr(texture, 'color_space'):
+                    texture.color_space = 'NONE' if is_sph_add else 'COLOR'
+                elif hasattr(texture.image, 'colorspace_settings'):
+                    texture.image.colorspace_settings.name = 'Linear' if is_sph_add else 'sRGB'
+
                 mat = self.material
                 nodes, links = mat.node_tree.nodes, mat.node_tree.links
                 if sphere_texture_type == 3:
@@ -482,13 +489,13 @@ class _FnMaterialCycles(_FnMaterialBI):
     def update_ambient_color(self):
         mat = self.material
         mmd_mat = mat.mmd_material
-        mat.diffuse_color = self._mixDiffuseAndAmbient(mmd_mat)
+        mat.diffuse_color[:3] = self._mixDiffuseAndAmbient(mmd_mat)
         self.__update_shader_input('Ambient Color', mmd_mat.ambient_color[:]+(1,))
 
     def update_diffuse_color(self):
         mat = self.material
         mmd_mat = mat.mmd_material
-        mat.diffuse_color = self._mixDiffuseAndAmbient(mmd_mat)
+        mat.diffuse_color[:3] = self._mixDiffuseAndAmbient(mmd_mat)
         self.__update_shader_input('Diffuse Color', mmd_mat.diffuse_color[:]+(1,))
 
     def update_alpha(self):
@@ -496,13 +503,15 @@ class _FnMaterialCycles(_FnMaterialBI):
         mmd_mat = mat.mmd_material
         if hasattr(mat, 'blend_method'):
             mat.blend_method = 'HASHED' # 'BLEND'
-            #mat.show_transparent_backside = False
+            #mat.show_transparent_back = False
         elif hasattr(mat, 'transparency_method'):
             mat.use_transparency = True
             mat.transparency_method = 'Z_TRANSPARENCY'
             mat.game_settings.alpha_blend = 'ALPHA'
         if hasattr(mat, 'alpha'):
             mat.alpha = mmd_mat.alpha
+        elif len(mat.diffuse_color) > 3:
+            mat.diffuse_color[3] = mmd_mat.alpha
         self.__update_shader_input('Alpha', mmd_mat.alpha)
 
     def update_specular_color(self):
@@ -514,7 +523,7 @@ class _FnMaterialCycles(_FnMaterialBI):
     def update_shininess(self):
         mat = self.material
         mmd_mat = mat.mmd_material
-        mat.roughness = 1/max(mmd_mat.shininess, 1)
+        mat.roughness = 1/pow(max(mmd_mat.shininess, 1), 0.37)
         if hasattr(mat, 'metallic'):
             mat.metallic = 1 - mat.roughness
         if hasattr(mat, 'specular_hardness'):
@@ -526,13 +535,17 @@ class _FnMaterialCycles(_FnMaterialBI):
         mmd_mat = mat.mmd_material
         if hasattr(mat, 'game_settings'):
             mat.game_settings.use_backface_culling = not mmd_mat.is_double_sided
+        elif hasattr(mat, 'use_backface_culling'):
+            mat.use_backface_culling = not mmd_mat.is_double_sided
         self.__update_shader_input('Double Sided', mmd_mat.is_double_sided)
 
     def update_self_shadow_map(self):
         mat = self.material
         mmd_mat = mat.mmd_material
         cast_shadows = mmd_mat.enabled_self_shadow_map if mmd_mat.alpha > 1e-3 else False
-        if hasattr(mat, 'transparent_shadow_method'):
+        if hasattr(mat, 'shadow_method'):
+            mat.shadow_method = 'HASHED' if cast_shadows else 'NONE'
+        if hasattr(mat, 'transparent_shadow_method'): #XXX
             mat.transparent_shadow_method = 'HASHED' if cast_shadows else 'NONE'
 
     def update_self_shadow(self):

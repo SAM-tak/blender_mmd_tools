@@ -62,6 +62,10 @@ class PMXImporter:
         self.__materialFaceCountTable = None
 
     @staticmethod
+    def __safe_name(name, max_length=59):
+        return str(bytes(name, 'utf8')[:max_length], 'utf8', errors='replace')
+
+    @staticmethod
     def flipUV_V(uv):
         u, v = uv
         return u, 1.0-v
@@ -70,7 +74,7 @@ class PMXImporter:
         """ Create main objects and link them to scene.
         """
         pmxModel = self.__model
-        obj_name = bpy.path.display_name(pmxModel.filepath)
+        obj_name = self.__safe_name(bpy.path.display_name(pmxModel.filepath), max_length=54)
         self.__rig = mmd_model.Model.create(pmxModel.name, pmxModel.name_e, self.__scale, obj_name)
         root = self.__rig.rootObject()
         mmd_root = root.mmd_root
@@ -104,9 +108,8 @@ class PMXImporter:
         bpy.ops.object.shape_key_add()
 
     def __importVertexGroup(self):
-        self.__vertexGroupTable = []
-        for i in self.__model.bones:
-            self.__vertexGroupTable.append(self.__meshObj.vertex_groups.new(name=i.name))
+        vgroups = self.__meshObj.vertex_groups
+        self.__vertexGroupTable = [vgroups.new(name=i.name) for i in self.__model.bones] or [vgroups.new(name='NO BONES')]
 
     def __importVertices(self):
         self.__importVertexGroup()
@@ -196,10 +199,14 @@ class PMXImporter:
         #            if p_bone.parent == t.parent:
         #                dependency_cycle_ik_bones.append(i)
 
+        from math import isfinite
+        def _VectorXZY(v):
+            return Vector(v).xzy if all(isfinite(n) for n in v) else Vector((0,0,0))
+
         with bpyutils.edit_object(obj) as data:
             for i in pmx_bones:
                 bone = data.edit_bones.new(name=i.name)
-                loc = Vector(i.location).xzy * self.__scale
+                loc = _VectorXZY(i.location) * self.__scale
                 bone.head = loc
                 editBoneTable.append(bone)
                 nameTable.append(bone.name)
@@ -218,7 +225,7 @@ class PMXImporter:
                     else:
                         b_bone.tail = b_bone.head
                 else:
-                    loc = Vector(m_bone.displayConnection).xzy * self.__scale
+                    loc = _VectorXZY(m_bone.displayConnection) * self.__scale
                     b_bone.tail = b_bone.head + loc
 
             for b_bone, m_bone in zip(editBoneTable, pmx_bones):
@@ -502,7 +509,7 @@ class PMXImporter:
 
         self.__materialFaceCountTable = []
         for i in pmxModel.materials:
-            mat = bpy.data.materials.new(name=i.name)
+            mat = bpy.data.materials.new(name=self.__safe_name(i.name, max_length=50))
             self.__materialTable.append(mat)
             mmd_mat = mat.mmd_material
             mmd_mat.name_j = i.name
@@ -519,16 +526,6 @@ class PMXImporter:
             mmd_mat.enabled_toon_edge = i.enabled_toon_edge
             mmd_mat.edge_color = i.edge_color
             mmd_mat.edge_weight = i.edge_size
-            mmd_mat.sphere_texture_type = str(i.sphere_texture_mode)
-            if i.is_shared_toon_texture:
-                mmd_mat.is_shared_toon_texture = True
-                mmd_mat.shared_toon_texture = i.toon_texture
-            else:
-                mmd_mat.is_shared_toon_texture = False
-                if i.toon_texture >= 0:
-                    mmd_mat.toon_texture = self.__textureTable[i.toon_texture]
-                else:
-                    mmd_mat.toon_texture = ''
             mmd_mat.comment = i.comment
 
             self.__materialFaceCountTable.append(int(i.vertex_count/3))
@@ -538,6 +535,15 @@ class PMXImporter:
                 texture_slot = fnMat.create_texture(self.__textureTable[i.texture])
                 texture_slot.texture.use_mipmap = self.__use_mipmap
                 self.__imageTable[len(self.__materialTable)-1] = texture_slot.texture.image
+
+            if i.is_shared_toon_texture:
+                mmd_mat.is_shared_toon_texture = True
+                mmd_mat.shared_toon_texture = i.toon_texture
+            else:
+                mmd_mat.is_shared_toon_texture = False
+                if i.toon_texture >= 0:
+                    mmd_mat.toon_texture = self.__textureTable[i.toon_texture]
+
             if i.sphere_texture_mode == 2:
                 amount = self.__spa_blend_factor
             else:
@@ -547,7 +553,7 @@ class PMXImporter:
                 texture_slot.diffuse_color_factor = amount
                 if i.sphere_texture_mode == 3 and getattr(pmxModel.header, 'additional_uvs', 0):
                     texture_slot.uv_layer = 'UV1' # for SubTexture
-                    mmd_mat.sphere_texture_type = mmd_mat.sphere_texture_type # re-update
+            mmd_mat.sphere_texture_type = str(i.sphere_texture_mode)
 
     def __importFaces(self):
         pmxModel = self.__model

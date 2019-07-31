@@ -22,7 +22,7 @@ if bpy.app.version < (2, 80, 0):
 
 
 def draw_filter_wrap(func):
-    if bpy.app.version < (2, 80, 0):
+    if 1 or bpy.app.version < (2, 80, 0):
         return func
     def draw_filter_new(self_, context, layout, reverse=False):
         func(self_, context, layout)
@@ -295,7 +295,7 @@ class MMDDisplayItemsPanel(_PanelBase, Panel):
 
 
 @register_wrap
-class UL_Morphs(UIList):
+class MMD_TOOLS_UL_Morphs(UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         mmd_root = data
         if self.layout_type in {'DEFAULT'}:
@@ -318,13 +318,11 @@ class UL_Morphs(UIList):
             layout.label(text="", icon_value=icon)
 
 @register_wrap
-class UL_MaterialMorphOffsets(UIList):
+class MMD_TOOLS_UL_MaterialMorphOffsets(UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         if self.layout_type in {'DEFAULT'}:
-            if item.material == '':
-                layout.label(text='All Materials', translate=False, icon='MATERIAL')
-                return
-            layout.label(text=item.material, translate=False, icon='MATERIAL')
+            material = item.material or 'All Materials'
+            layout.label(text=material, translate=False, icon='MATERIAL')
         elif self.layout_type in {'COMPACT'}:
             pass
         elif self.layout_type in {'GRID'}:
@@ -332,7 +330,7 @@ class UL_MaterialMorphOffsets(UIList):
             layout.label(text="", icon_value=icon)
 
 @register_wrap
-class UL_UVMorphOffsets(UIList):
+class MMD_TOOLS_UL_UVMorphOffsets(UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         if self.layout_type in {'DEFAULT'}:
             layout.label(text=str(item.index), translate=False, icon='MESH_DATA')
@@ -344,7 +342,7 @@ class UL_UVMorphOffsets(UIList):
             layout.label(text="", icon_value=icon)
 
 @register_wrap
-class UL_BoneMorphOffsets(UIList):
+class MMD_TOOLS_UL_BoneMorphOffsets(UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         if self.layout_type in {'DEFAULT'}:
             layout.prop(item, 'bone', text='', emboss=False, icon='BONE_DATA')
@@ -356,7 +354,7 @@ class UL_BoneMorphOffsets(UIList):
             layout.label(text="", icon_value=icon)
 
 @register_wrap
-class UL_GroupMorphOffsets(UIList):
+class MMD_TOOLS_UL_GroupMorphOffsets(UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         if self.layout_type in {'DEFAULT'}:
             row = _layout_split(layout, factor=0.5, align=True)
@@ -412,7 +410,7 @@ class MMDMorphToolsPanel(_PanelBase, Panel):
         c = col.column(align=True)
         row = c.row()
         row.template_list(
-            "UL_Morphs", "",
+            "MMD_TOOLS_UL_Morphs", "",
             mmd_root, morph_type,
             mmd_root, "active_morph"
             )
@@ -468,7 +466,7 @@ class MMDMorphToolsPanel(_PanelBase, Panel):
 
     def _draw_material_data(self, context, rig, col, morph):
         col.label(text='Material Offsets (%d)'%len(morph.data))
-        data = self._template_morph_offset_list(col, morph, 'UL_MaterialMorphOffsets')
+        data = self._template_morph_offset_list(col, morph, 'MMD_TOOLS_UL_MaterialMorphOffsets')
         if data is None:
             return
 
@@ -495,7 +493,10 @@ class MMDMorphToolsPanel(_PanelBase, Panel):
                 row.operator(operators.morph.ClearTempMaterials.bl_idname, text='Clear')
 
             row = c.row()
-            row.prop(data, 'offset_type')
+            row.prop(data, 'offset_type', expand=True)
+            r1 = row.row(align=True)
+            r1.operator(operators.morph.InitMaterialOffset.bl_idname, text='', icon='TRIA_LEFT').target_value = 0
+            r1.operator(operators.morph.InitMaterialOffset.bl_idname, text='', icon='TRIA_RIGHT').target_value = 1
             row = c.row()
             row.column(align=True).prop(data, 'diffuse_color', expand=True, slider=True)
             c1 = row.column(align=True)
@@ -548,7 +549,7 @@ class MMDMorphToolsPanel(_PanelBase, Panel):
         row.operator(operators.morph.ClearBoneMorphView.bl_idname, text='Clear')
 
         col.label(text='Bone Offsets (%d)'%len(morph.data))
-        data = self._template_morph_offset_list(col, morph, 'UL_BoneMorphOffsets')
+        data = self._template_morph_offset_list(col, morph, 'MMD_TOOLS_UL_BoneMorphOffsets')
         if data is None:
             return
 
@@ -582,13 +583,13 @@ class MMDMorphToolsPanel(_PanelBase, Panel):
             row.prop(morph, 'vertex_group_scale', text='Scale')
         else:
             row.label(text='UV Offsets (%d)'%len(morph.data))
-            #self._template_morph_offset_list(c, morph, 'UL_UVMorphOffsets')
+            #self._template_morph_offset_list(c, morph, 'MMD_TOOLS_UL_UVMorphOffsets')
         row.prop(morph, 'uv_index')
         row.operator('mmd_tools.morph_offset_remove', text='', icon='X').all = True
 
     def _draw_group_data(self, context, rig, col, morph):
         col.label(text='Group Offsets (%d)'%len(morph.data))
-        item = self._template_morph_offset_list(col, morph, 'UL_GroupMorphOffsets')
+        item = self._template_morph_offset_list(col, morph, 'MMD_TOOLS_UL_GroupMorphOffsets')
         if item is None:
             return
 
@@ -659,7 +660,7 @@ class UL_ObjectsMixIn(object):
         return flt_flags, flt_neworder
 
 @register_wrap
-class UL_rigidbodies(UL_ObjectsMixIn, UIList):
+class MMD_TOOLS_UL_rigidbodies(UIList, UL_ObjectsMixIn):
     mmd_type = 'RIGID_BODY'
     icon = 'MESH_ICOSPHERE'
     prop_name = 'mmd_rigid'
@@ -714,7 +715,7 @@ class MMDRigidbodySelectorPanel(_PanelBase, Panel):
         c = col.column(align=True)
         row = c.row()
         row.template_list(
-            "UL_rigidbodies",
+            "MMD_TOOLS_UL_rigidbodies",
             "",
             SceneOp(context).id_scene, 'objects',
             root.mmd_root, 'active_rigidbody_index',
@@ -732,7 +733,7 @@ class MMDRigidbodySelectorPanel(_PanelBase, Panel):
 
 
 @register_wrap
-class UL_joints(UL_ObjectsMixIn, UIList):
+class MMD_TOOLS_UL_joints(UIList, UL_ObjectsMixIn):
     mmd_type = 'JOINT'
     icon = 'CONSTRAINT'
     prop_name = 'mmd_joint'
@@ -775,7 +776,7 @@ class MMDJointSelectorPanel(_PanelBase, Panel):
 
         row = c.row()
         row.template_list(
-            "UL_joints",
+            "MMD_TOOLS_UL_joints",
             "",
             SceneOp(context).id_scene, 'objects',
             root.mmd_root, 'active_joint_index',
