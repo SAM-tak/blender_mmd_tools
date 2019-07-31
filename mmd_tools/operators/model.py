@@ -184,6 +184,10 @@ class CreateMMDModelRoot(Operator):
         default=1.0,
         )
 
+    @classmethod
+    def poll(cls, context):
+        return not context.object or context.object.mode == 'OBJECT'
+
     def execute(self, context):
         rig = mmd_model.Model.create(self.name_j, self.name_e, self.scale, add_root_bone=True)
         rig.initialDisplayFrames()

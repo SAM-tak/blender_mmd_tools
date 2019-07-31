@@ -26,5 +26,4 @@ else:
         util_tools,
         view_prop,
         view_header
-        )
-
+    )

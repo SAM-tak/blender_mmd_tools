@@ -20,7 +20,7 @@ else:
         material,
         bone,
         rigid_body,
-        )
+    )
 
 __properties = {
     bpy.types.Object: {
@@ -45,23 +45,23 @@ __properties = {
                 ('NON_COLLISION_CONSTRAINT', 'Non Collision Constraint', '', 52),
                 ('SPRING_CONSTRAINT', 'Spring Constraint', '', 53),
                 ('SPRING_GOAL', 'Spring Goal', '', 54),
-                ]
-            ),
+            ]
+        ),
         'mmd_root': bpy.props.PointerProperty(type=root.MMDRoot),
         'mmd_camera': bpy.props.PointerProperty(type=camera.MMDCamera),
         'mmd_rigid': bpy.props.PointerProperty(type=rigid_body.MMDRigidBody),
         'mmd_joint': bpy.props.PointerProperty(type=rigid_body.MMDJoint),
         'is_mmd_glsl_light': bpy.props.BoolProperty(name='is_mmd_glsl_light', default=False),
-        },
+    },
     bpy.types.Material: {
         'mmd_material': bpy.props.PointerProperty(type=material.MMDMaterial),
-        },
+    },
     bpy.types.PoseBone: {
         'mmd_bone': bpy.props.PointerProperty(type=bone.MMDBone),
         'is_mmd_shadow_bone': bpy.props.BoolProperty(name='is_mmd_shadow_bone', default=False),
         'mmd_shadow_bone_type': bpy.props.StringProperty(name='mmd_shadow_bone_type'),
-        }
     }
+}
 
 def __patch(properties): # temporary patching, should be removed in the future
     prop_obj = properties.setdefault(bpy.types.Object, {})
@@ -71,35 +71,35 @@ def __patch(properties): # temporary patching, should be removed in the future
     prop_obj['select'] = bpy.props.BoolProperty(
         get=lambda prop: prop.select_get(),
         set=lambda prop, value: prop.select_set(value),
-        )
+    )
     prop_obj['hide'] = bpy.props.BoolProperty(
         get=lambda prop: prop.hide_viewport,
         set=lambda prop, value: setattr(prop, 'hide_viewport', value),
-        )
+    )
     prop_obj['show_x_ray'] = bpy.props.BoolProperty(
         get=lambda prop: prop.show_in_front,
         set=lambda prop, value: setattr(prop, 'show_in_front', value),
-        )
+    )
     prop_obj['empty_draw_size'] = bpy.props.FloatProperty(
         get=lambda prop: prop.empty_display_size,
         set=lambda prop, value: setattr(prop, 'empty_display_size', value),
-        )
+    )
     prop_obj['empty_draw_type'] = bpy.props.StringProperty(
         get=lambda prop: prop.empty_display_type,
         set=lambda prop, value: setattr(prop, 'empty_display_type', value),
-        )
+    )
     prop_obj['draw_type'] = bpy.props.StringProperty(
         get=lambda prop: prop.display_type,
         set=lambda prop, value: setattr(prop, 'display_type', value),
-        )
+    )
     prop_arm['draw_type'] = bpy.props.StringProperty(
         get=lambda prop: prop.display_type,
         set=lambda prop, value: setattr(prop, 'display_type', value),
-        )
+    )
     prop_cam['draw_size'] = bpy.props.FloatProperty(
         get=lambda prop: prop.display_size,
         set=lambda prop, value: setattr(prop, 'display_size', value),
-        )
+    )
 
 if bpy.app.version >= (2, 80, 0):
     __patch(__properties)

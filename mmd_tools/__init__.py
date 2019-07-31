@@ -11,7 +11,7 @@ bl_info = {
     "wiki_url": "https://github.com/powroupi/blender_mmd_tools/wiki",
     "tracker_url": "https://github.com/powroupi/blender_mmd_tools/issues",
     "category": "Object",
-    }
+}
 
 __bl_classes = []
 def register_wrap(cls):
@@ -65,22 +65,21 @@ class MMDToolsAddonPreferences(AddonPreferences):
     bl_idname = __name__
 
     shared_toon_folder = StringProperty(
-            name="Shared Toon Texture Folder",
-            description=('Directory path to toon textures. This is normally the ' +
-                         '"Data" directory within of your MikuMikuDance directory'),
-            subtype='DIR_PATH',
-            )
+        name="Shared Toon Texture Folder",
+        description='Directory path to toon textures. This is normally the "Data" directory within of your MikuMikuDance directory',
+        subtype='DIR_PATH',
+    )
     base_texture_folder = StringProperty(
-            name='Base Texture Folder',
-            description='Path for textures shared between models',
-            subtype='DIR_PATH',
-            )
+        name='Base Texture Folder',
+        description='Path for textures shared between models',
+        subtype='DIR_PATH',
+    )
     dictionary_folder = StringProperty(
-            name='Dictionary Folder',
-            description='Path for searching csv dictionaries',
-            subtype='DIR_PATH',
-            default=__file__[:-11],
-            )
+        name='Dictionary Folder',
+        description='Path for searching csv dictionaries',
+        subtype='DIR_PATH',
+        default=__file__[:-11],
+    )
 
     def draw(self, context):
         layout = self.layout
