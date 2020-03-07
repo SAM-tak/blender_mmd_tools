@@ -134,7 +134,7 @@ class TestPmxExporter(unittest.TestCase):
         for mat0, mat1 in zip(source_materials, result_materials):
             msg = mat0.name
             self.assertEqual(mat0.name, mat1.name, msg)
-            self.assertEqual(mat0.name_e or mat0.name, mat1.name_e, msg)
+            self.assertEqual(mat0.name_e, mat1.name_e, msg)
             self.assertEqual(mat0.diffuse, mat1.diffuse, msg)
             self.assertEqual(mat0.specular, mat1.specular, msg)
             self.assertEqual(mat0.shininess, mat1.shininess, msg)
@@ -203,13 +203,13 @@ class TestPmxExporter(unittest.TestCase):
 
     def __get_bone_display_connection(self, bone, bones):
         displayConnection = bone.displayConnection
-        if displayConnection == -1 or displayConnection == [0.0, 0.0, 0.0]:
-            return [0.0, 0.0, 0.0]
         if isinstance(displayConnection, int):
+            if displayConnection == -1:
+                return (0.0, 0.0, 0.0)
             tail_bone = self.__get_bone(displayConnection, bones)
             if self.__get_bone_name(tail_bone.parent, bones) == bone.name and not tail_bone.isMovable:
                 return tail_bone.name
-            return list(Vector(tail_bone.location) - Vector(bone.location))
+            return tuple(Vector(tail_bone.location) - Vector(bone.location))
         return displayConnection
 
     def __check_pmx_bones(self, source_model, result_model):
@@ -228,7 +228,7 @@ class TestPmxExporter(unittest.TestCase):
         for bone0, bone1 in zip(source_bones, result_bones):
             msg = bone0.name
             self.assertEqual(bone0.name, bone1.name, msg)
-            self.assertEqual(bone0.name_e or bone0.name, bone1.name_e, msg)
+            self.assertEqual(bone0.name_e, bone1.name_e, msg)
             self.assertLess(self.__vector_error(bone0.location, bone1.location), 1e-6, msg)
 
             parent0 = self.__get_bone_name(bone0.parent, source_bones)
@@ -237,7 +237,7 @@ class TestPmxExporter(unittest.TestCase):
 
             self.assertEqual(bone0.transform_order, bone1.transform_order, msg)
             self.assertEqual(bone0.isRotatable, bone1.isRotatable, msg)
-            self.assertEqual(bone0.isMovable, bone1.isMovable, msg)
+            self.assertEqual(bone0.isMovable and not bone0.axis, bone1.isMovable, msg)
             self.assertEqual(bone0.visible, bone1.visible, msg)
             self.assertEqual(bone0.isControllable, bone1.isControllable, msg)
             self.assertEqual(bone0.isIK, bone1.isIK, msg)
@@ -296,7 +296,7 @@ class TestPmxExporter(unittest.TestCase):
             msg = bone0.name
             displayConnection0 = self.__get_bone_display_connection(bone0, source_bones)
             displayConnection1 = self.__get_bone_display_connection(bone1, result_bones)
-            if isinstance(displayConnection0, list) and isinstance(displayConnection1, list):
+            if not isinstance(displayConnection0, str) and not isinstance(displayConnection1, str):
                 self.assertLess(self.__vector_error(displayConnection0, displayConnection1), 1e-4, msg)
             else:
                 self.assertEqual(displayConnection0, displayConnection1, msg)

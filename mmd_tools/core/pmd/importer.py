@@ -87,6 +87,8 @@ def import_pmd_to_pmx(filepath):
     logging.info('------------------------------')
     logging.info(' Convert Bones')
     logging.info('------------------------------')
+    # ボーンの種類
+    # 0:回転 1:回転/移動 2:IK 3:不明 4:IK影響下 5:回転影響下 6:IK接続先 7:非表示/ボーン接続先 8:捩り 9:回転運動
     for i, bone in enumerate(pmd_model.bones):
         pmx_bone = pmx.Bone()
         pmx_bone.name = bone.name
@@ -98,7 +100,7 @@ def import_pmd_to_pmx(filepath):
         else:
             pmx_bone.displayConnection = -1
         if pmx_bone.displayConnection <= 0:
-            pmx_bone.displayConnection = [0.0, 0.0, 0.0]
+            pmx_bone.displayConnection = (0.0, 0.0, 0.0)
         pmx_bone.isIK = False
         if bone.type == 0:
             pmx_bone.isMovable = False
@@ -199,7 +201,7 @@ def import_pmd_to_pmx(filepath):
         pmx_mat.enabled_toon_edge = (mat.edge_flag != 0)
         pmx_mat.enabled_self_shadow = pmx_mat.enabled_self_shadow_map # True (in MMD)
         pmx_mat.enabled_drop_shadow = pmx_mat.enabled_toon_edge # True (in MMD)
-        pmx_mat.edge_color = [0, 0, 0, 1]
+        pmx_mat.edge_color = (0, 0, 0, 1)
         pmx_mat.vertex_count = mat.vertex_count
         if len(mat.texture_path) > 0:
             tex_path = mat.texture_path

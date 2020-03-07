@@ -308,7 +308,10 @@ class _MorphSlider:
                     for n in m.node_tree.nodes:
                         if n.name.startswith('mmd_bind'):
                             m.node_tree.nodes.remove(n)
-                    m.mmd_material.is_double_sided = m.mmd_material.is_double_sided # update mmd shader
+                    if 'mmd_shader' in m.node_tree.nodes:
+                        m.mmd_material.is_double_sided = m.mmd_material.is_double_sided # update mmd shader
+                    else:
+                        m.update_tag()
 
         attributes = set(TransformConstraintOp.min_max_attributes('LOCATION', 'to'))
         attributes |= set(TransformConstraintOp.min_max_attributes('ROTATION', 'to'))
@@ -339,7 +342,6 @@ class _MorphSlider:
         self.__cleanup()
 
     def bind(self):
-        #bpy.context.user_preferences.system.use_scripts_auto_execute = True
         rig = self.__rig
         root = rig.rootObject()
         armObj = rig.armature()

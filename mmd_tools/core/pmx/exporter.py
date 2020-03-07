@@ -267,7 +267,7 @@ class __PmxExporter:
         mmd_mat = material.mmd_material
 
         p_mat.name = mmd_mat.name_j or material.name
-        p_mat.name_e = mmd_mat.name_e or material.name
+        p_mat.name_e = mmd_mat.name_e
         p_mat.diffuse = list(mmd_mat.diffuse_color) + [mmd_mat.alpha]
         p_mat.ambient = mmd_mat.ambient_color
         p_mat.specular = mmd_mat.specular_color
@@ -318,6 +318,9 @@ class __PmxExporter:
             A dictionary to map Blender bone names to bone indices of the pmx.model instance.
         """
         arm = self.__armature
+        if hasattr(arm, 'evaluated_get'):
+            bpy.context.view_layer.update()
+            arm = arm.evaluated_get(bpy.context.evaluated_depsgraph_get())
         boneMap = {}
         pmx_bones = []
         pose_bones = arm.pose.bones
@@ -355,7 +358,7 @@ class __PmxExporter:
                 mmd_bone = p_bone.mmd_bone
                 pmx_bone = pmx.Bone()
                 pmx_bone.name = mmd_bone.name_j or bone.name
-                pmx_bone.name_e = mmd_bone.name_e or bone.name
+                pmx_bone.name_e = mmd_bone.name_e
 
                 pmx_bone.hasAdditionalRotate = mmd_bone.has_additional_rotation
                 pmx_bone.hasAdditionalLocation = mmd_bone.has_additional_location
@@ -429,7 +432,7 @@ class __PmxExporter:
         self.__exportIK(r)
         return r
 
-    def __exportIKLinks(self, pose_bone, count, bone_map, ik_links):
+    def __exportIKLinks(self, pose_bone, count, bone_map, ik_links, custom_bone):
         if count <= 0 or pose_bone is None or pose_bone.name not in bone_map:
             return ik_links
 
@@ -440,8 +443,17 @@ class __PmxExporter:
         from math import pi
         minimum, maximum = [-pi]*3, [pi]*3
         unused_counts = 0
+        ik_limit_custom = next((c for c in custom_bone.constraints if c.type == 'LIMIT_ROTATION' and c.name == 'mmd_ik_limit_custom%d'%len(ik_links)), None)
         ik_limit_override = next((c for c in pose_bone.constraints if c.type == 'LIMIT_ROTATION' and not c.mute), None)
         for i, axis in enumerate('xyz'):
+            if ik_limit_custom: # custom ik limits for MMD only
+                if getattr(ik_limit_custom, 'use_limit_'+axis):
+                    minimum[i] = getattr(ik_limit_custom, 'min_'+axis)
+                    maximum[i] = getattr(ik_limit_custom, 'max_'+axis)
+                else:
+                    unused_counts += 1
+                continue
+
             if getattr(pose_bone, 'lock_ik_'+axis):
                 minimum[i] = maximum[i] = 0
             elif ik_limit_override is not None and getattr(ik_limit_override, 'use_limit_'+axis):
@@ -460,7 +472,7 @@ class __PmxExporter:
             ik_link.minimumAngle = list(minimum)
             ik_link.maximumAngle = list(maximum)
 
-        return self.__exportIKLinks(pose_bone.parent, count - 1, bone_map, ik_links + [ik_link])
+        return self.__exportIKLinks(pose_bone.parent, count - 1, bone_map, ik_links + [ik_link], custom_bone)
 
 
     def __exportIK(self, bone_map):
@@ -471,12 +483,20 @@ class __PmxExporter:
         arm = self.__armature
         ik_loop_factor = max(arm.get('mmd_ik_loop_factor', 1), 1)
         pose_bones = arm.pose.bones
+
+        ik_target_custom_map = {getattr(b.constraints.get('mmd_ik_target_custom', None), 'subtarget', None):b for b in pose_bones if not b.is_mmd_shadow_bone}
+        def __ik_target_bone_get(ik_constraint_bone, ik_bone):
+            if ik_bone.name in ik_target_custom_map:
+                logging.debug('  (use "mmd_ik_target_custom")')
+                return ik_target_custom_map[ik_bone.name] # for supporting the ik target which is not a child of ik_constraint_bone
+            return self.__get_ik_target_bone(ik_constraint_bone) # this only search the children of ik_constraint_bone
+
         for bone in pose_bones:
             if bone.is_mmd_shadow_bone:
                 continue
             for c in bone.constraints:
                 if c.type == 'IK' and not c.mute:
-                    logging.debug('  Found IK constraint.')
+                    logging.debug('  Found IK constraint on %s', bone.name)
                     ik_pose_bone = self.__get_ik_control_bone(c)
                     if ik_pose_bone is None:
                         logging.warning('  * Invalid IK constraint "%s" on bone %s', c.name, bone.name)
@@ -493,16 +513,19 @@ class __PmxExporter:
                         continue
 
                     ik_chain0 = bone if c.use_tail else bone.parent
-                    ik_target_bone = self.__get_ik_target_bone(bone) if c.use_tail else bone
+                    ik_target_bone = __ik_target_bone_get(bone, ik_pose_bone) if c.use_tail else bone
                     if ik_target_bone is None:
                         logging.warning('  * IK bone: %s, IK Target not found !!!', ik_pose_bone.name)
                         continue
                     logging.debug('  - IK bone: %s, IK Target: %s', ik_pose_bone.name, ik_target_bone.name)
                     pmx_ik_bone.isIK = True
                     pmx_ik_bone.loopCount = max(int(c.iterations/ik_loop_factor), 1)
-                    pmx_ik_bone.rotationConstraint = bone.mmd_bone.ik_rotation_constraint
+                    if ik_pose_bone.name in ik_target_custom_map:
+                        pmx_ik_bone.rotationConstraint = ik_pose_bone.mmd_bone.ik_rotation_constraint
+                    else:
+                        pmx_ik_bone.rotationConstraint = bone.mmd_bone.ik_rotation_constraint
                     pmx_ik_bone.target = bone_map[ik_target_bone.name]
-                    pmx_ik_bone.ik_links = self.__exportIKLinks(ik_chain0, c.chain_count, bone_map, [])
+                    pmx_ik_bone.ik_links = self.__exportIKLinks(ik_chain0, c.chain_count, bone_map, [], ik_pose_bone)
 
     def __get_ik_control_bone(self, ik_constraint):
         arm = ik_constraint.target
@@ -563,9 +586,11 @@ class __PmxExporter:
             shape_key_names.sort(key=lambda x: root.mmd_root.vertex_morphs.find(x))
 
         for i in shape_key_names:
-            morph = pmx.VertexMorph(i, '', 4)
-            morph.name_e = morph_english_names.get(i, '')
-            morph.category = morph_categories.get(i, pmx.Morph.CATEGORY_OHTER)
+            morph = pmx.VertexMorph(
+                name=i,
+                name_e=morph_english_names.get(i, ''),
+                category=morph_categories.get(i, pmx.Morph.CATEGORY_OHTER)
+            )
             self.__model.morphs.append(morph)
 
         append_table = dict(zip(shape_key_names, [m.offsets.append for m in self.__model.morphs]))
@@ -593,7 +618,7 @@ class __PmxExporter:
                     else:
                         morph_data.index = -1
                 except ValueError:
-                    logging.warning('Material Morph (%s): Material %s was not found.', morph.name, data.material)
+                    logging.warning('Material Morph (%s): Material "%s" was not found.', morph.name, data.material)
                     continue
                 morph_data.offset_type = ['MULT', 'ADD'].index(data.offset_type)
                 morph_data.diffuse_offset = data.diffuse_color
@@ -668,7 +693,7 @@ class __PmxExporter:
                     continue
                 blender_bone = pose_bones.get(data.bone, None)
                 if blender_bone is None:
-                    logging.warning('Bone Morph (%s): Bone %s was not found.', morph.name, data.bone)
+                    logging.warning('Bone Morph (%s): Bone "%s" was not found.', morph.name, data.bone)
                     continue
                 converter = bone_util_cls(blender_bone, self.__scale, invert=True)
                 morph_data.location_offset = converter.convert_location(data.location)
@@ -733,7 +758,7 @@ class __PmxExporter:
             for data in morph.data:
                 morph_index = morph_map.get((data.morph_type, data.name), -1)
                 if morph_index < 0:
-                    logging.warning('Group Morph (%s): Morph %s was not found.', morph.name, data.name)
+                    logging.warning('Group Morph (%s): Morph "%s" was not found.', morph.name, data.name)
                     continue
                 morph_data = pmx.GroupMorphOffset()
                 morph_data.morph = morph_index
@@ -843,8 +868,9 @@ class __PmxExporter:
             p_joint.rotation = Vector(r).xzy * -1
             p_joint.src_rigid = rigid_map.get(rbc.object1, -1)
             p_joint.dest_rigid = rigid_map.get(rbc.object2, -1)
-            p_joint.maximum_location = Vector((rbc.limit_lin_x_upper, rbc.limit_lin_z_upper, rbc.limit_lin_y_upper)) * self.__scale
-            p_joint.minimum_location = Vector((rbc.limit_lin_x_lower, rbc.limit_lin_z_lower, rbc.limit_lin_y_lower)) * self.__scale
+            scale = self.__scale * sum(s) / 3
+            p_joint.maximum_location = Vector((rbc.limit_lin_x_upper, rbc.limit_lin_z_upper, rbc.limit_lin_y_upper)) * scale
+            p_joint.minimum_location = Vector((rbc.limit_lin_x_lower, rbc.limit_lin_z_lower, rbc.limit_lin_y_lower)) * scale
             p_joint.maximum_rotation = Vector((rbc.limit_ang_x_lower, rbc.limit_ang_z_lower, rbc.limit_ang_y_lower)) * -1
             p_joint.minimum_rotation = Vector((rbc.limit_ang_x_upper, rbc.limit_ang_z_upper, rbc.limit_ang_y_upper)) * -1
             p_joint.spring_constant = Vector(mmd_joint.spring_linear).xzy
@@ -1184,7 +1210,7 @@ class __PmxExporter:
 
         if root is not None:
             self.__model.name = root.mmd_root.name or root.name
-            self.__model.name_e = root.mmd_root.name_e or root.name
+            self.__model.name_e = root.mmd_root.name_e
             txt = bpy.data.texts.get(root.mmd_root.comment_text, None)
             if txt:
                 self.__model.comment = txt.as_string().replace('\n', '\r\n')
